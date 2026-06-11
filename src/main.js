@@ -1,7 +1,7 @@
 // Boot, game loop, camera, input, UI glue, FPS governor.
 import * as THREE from 'three';
 import { makeAtlas, makeWindows, makeGlow, makeShadow, makeSpeedlines, makeGround, makeCoin, makeToonGradient } from './atlas.js';
-import { curveUniform, wobbleTime } from './curveworld.js';
+import { curveUniform } from './curveworld.js';
 import { World, LANE_W, THEMES } from './world.js';
 import { Player } from './player.js';
 import { Sky } from './sky.js';
@@ -355,7 +355,6 @@ function frame(now) {
   }
   let gdt = dt * (state === ST.DEAD ? slowmo : 1);
   if (state === ST.RUN && boost.slow > 0) gdt *= 0.55;   // ⏳ слоу-мо
-  wobbleTime.value = t;                                  // «желе»-колыхание мира
 
   // curve wander — the "running around a corner" feel
   const cT = Math.sin(t * 0.10) * 0.9 + Math.sin(t * 0.041 + 1.7) * 0.6;
