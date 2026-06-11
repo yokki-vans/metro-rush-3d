@@ -181,7 +181,6 @@ export class Sky {
     // weather transition
     this.wTimer -= dt;
     if (this.wTimer <= 0) {
-      const names = Object.keys(WEATHERS);
       const roll = Math.random();
       const next = roll < 0.42 ? 'clear' : roll < 0.66 ? 'rain' : roll < 0.83 ? 'fog' : 'snow';
       this.setWeather(next === this.weather ? 'clear' : next);
@@ -190,8 +189,8 @@ export class Sky {
     const W = this.cur, TG = this.target, wk = Math.min(1, dt / 5);
     for (const key of Object.keys(W)) W[key] = lerp(W[key], TG[key], wk);
 
-    const night = THREE.MathUtils.clamp((Math.sin((0.58 - t) * Math.PI / 0.16)), 0, 1) >= 0 && (t > 0.52 && t < 0.98) ?
-      THREE.MathUtils.smoothstep(t, 0.52, 0.60) * (1 - THREE.MathUtils.smoothstep(t, 0.90, 0.98)) : 0;
+    // 0 днём, плавно 1 ночью (t∈0.60..0.90), с рассветным спадом
+    const night = THREE.MathUtils.smoothstep(t, 0.52, 0.60) * (1 - THREE.MathUtils.smoothstep(t, 0.90, 0.98));
 
     // gray out for bad weather
     this._cTop.lerp(this._gray, W.gray * 0.8 * (1 - night * 0.5));

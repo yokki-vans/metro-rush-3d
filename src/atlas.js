@@ -2,6 +2,20 @@
 // sprites for glows/shadows. All generated at boot — zero downloads, zero licenses.
 import * as THREE from 'three';
 
+// Safari ≤15 has no ctx.roundRect — polyfill so atlas generation can't crash boot
+if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+    return this;
+  };
+}
+
 function canvas(w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;

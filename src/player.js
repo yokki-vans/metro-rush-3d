@@ -74,6 +74,8 @@ export class Player {
     this.grounded = true;
     this.rolling = 0;
     this.rollSpin = 0;
+    this.jumpBuf = 0;          // «нажал прыжок чуть раньше приземления»
+    this.rollBuf = 0;          // свайп вниз в воздухе → кувырок при касании
     this.dead = false;
     this.leanT = 0;
     this.stepT = 0;
@@ -96,12 +98,16 @@ export class Player {
   }
 
   jump() {
-    if (this.dead || !this.grounded) {
+    if (this.dead) return false;
+    if (!this.grounded) {
+      this.jumpBuf = 0.16;            // буфер: исполним сразу после приземления
       return false;
     }
     this.vy = JUMP_V;
     this.grounded = false;
     this.rolling = 0;
+    this.rollSpin = 0;
+    if (this.model) { this.model.rotation.x = 0; this.model.position.y = 0; }
     this.play('Jump', 0.08);
     return true;
   }
@@ -109,6 +115,7 @@ export class Player {
   fastFall() {                        // swipe down in the air
     if (this.dead || this.grounded) return false;
     this.vy = FALL_FAST;
+    this.rollBuf = 0.22;              // как в раннерах: вниз в воздухе = кувырок при касании
     return true;
   }
 
@@ -130,9 +137,19 @@ export class Player {
   update(dt, world, dist, speed, cb) {
     if (this.ready) this.mixer.update(dt * (this.dead ? 0.9 : 1));
     if (this.dead) {
+      // погибший в прыжке падает на землю, а не зависает в воздухе
+      if (!this.grounded) {
+        this.vy -= GRAV * dt;
+        this.y += this.vy * dt;
+        const gh = world.groundHeight(this.x, dist);
+        if (this.y <= gh) { this.y = gh; this.grounded = true; }
+      }
       this.group.position.set(this.x, this.y, 0);
+      this.shadow.position.set(this.x, world.groundHeight(this.x, dist) + 0.03, 0);
       return;
     }
+    this.jumpBuf -= dt;
+    this.rollBuf -= dt;
 
     // lane x
     const targetX = (this.lane - 1) * LANE_W;
@@ -156,7 +173,20 @@ export class Player {
         this.y = gh;
         this.grounded = true;
         cb.onLand && cb.onLand(this.y);
-        this.play('Running', 0.12);
+        if (this.jumpBuf > 0) {            // буферизованный прыжок
+          this.jumpBuf = 0;
+          this.rollBuf = 0;
+          this.vy = JUMP_V;
+          this.grounded = false;
+          this.play('Jump', 0.08);
+          cb.onJump && cb.onJump();
+        } else {
+          this.play('Running', 0.12);
+          if (this.rollBuf > 0) {          // кувырок сразу после приземления
+            this.rollBuf = 0;
+            if (this.roll()) cb.onRoll && cb.onRoll();
+          }
+        }
       }
     }
 
@@ -179,8 +209,9 @@ export class Player {
     this.leanT *= Math.exp(-6 * dt);
     if (this.model) {
       this.model.rotation.z = -this.leanT * 1.4;
-      const bob = this.grounded && this.rolling <= 0 ? Math.abs(Math.sin(dist * 1.9)) * 0.03 : 0;
-      this.model.position.y = bob;
+      if (this.rolling <= 0) {           // не затирать подъём корпуса во время кувырка
+        this.model.position.y = this.grounded ? Math.abs(Math.sin(dist * 1.9)) * 0.03 : 0;
+      }
       if (this.rolling <= 0 && this.model.rotation.x !== 0 && this.current !== 'Death') {
         this.model.rotation.x *= Math.exp(-10 * dt);
       }

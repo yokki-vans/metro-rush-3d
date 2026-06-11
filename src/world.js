@@ -99,7 +99,7 @@ export class World {
     this.matCoin = curved(new THREE.MeshLambertMaterial({ color: 0xffc928, emissive: 0x885f00 }));
 
     // pools
-    this.trains = instPool(makeTrainGeo(), this.matAtlas, 18);
+    this.trains = instPool(makeTrainGeo(), this.matAtlas, 24);
     this.barriers = instPool(makeBarrierGeo(), this.matAtlas, 24);
     this.gantries = instPool(makeGantryGeo(), this.matAtlas, 14);
     this.ramps = instPool(makeRampGeo(), this.matAtlas, 8);
@@ -179,6 +179,7 @@ export class World {
     this.nextChunk = 0;
     this.spawnS = 70;            // obstacle-free runway
     this.laneBusy = [0, 0, 0];   // course-s until which a lane is filled by a train
+    this.movingCount = [0, 0, 0]; // живые движущиеся поезда на полосе
     this._hideAll();
   }
 
@@ -198,6 +199,14 @@ export class World {
     if (o.inst2 != null) { pool.mesh.setMatrixAt(o.inst2, pool.zero); pool.free.push(o.inst2); }
     if (o.rampInst != null) { this.ramps.mesh.setMatrixAt(o.rampInst, this.ramps.zero); this.ramps.free.push(o.rampInst); }
     if (o.light) { o.light.visible = false; o.light = null; }
+    if (o.kind === 'mtrain') this.movingCount[o.lane] = Math.max(0, this.movingCount[o.lane] - 1);
+  }
+
+  // полоса полностью свободна впереди (для спавна движущегося поезда)
+  _laneClearAhead(l, dist) {
+    if (this.movingCount[l] > 0) return false;
+    for (const o of this.obstacles) if (o.lane === l && o.s1 > dist) return false;
+    return true;
   }
 
   // ----------------------------------------------------------------- layout
@@ -205,20 +214,22 @@ export class World {
     while (this.spawnS < dist + AHEAD - 20) {
       const diff = Math.min(1, dist / 2600);
       const s = this.spawnS;
+      const gap = Math.max(17, 26 - diff * 8 + Math.random() * 14);
+      const lineMax = Math.max(3, Math.floor((gap - 6) / 2)); // монеты не дотягиваются до следующего ряда
       const r = Math.random();
-      // lanes not currently occupied by a parked train at this point
-      const free = [0, 1, 2].filter(l => this.laneBusy[l] < s - 3);
+      // полосы без стоящих поездов в этой точке и без живых движущихся составов
+      const free = [0, 1, 2].filter(l => this.laneBusy[l] < s - 3 && this.movingCount[l] === 0);
       if (!free.length) { this.spawnS += 12; continue; }
       const lane = () => free.splice((Math.random() * free.length) | 0, 1)[0];
       // never let parked trains cover all three lanes at once
       const canTrain = () => [0, 1, 2].filter(l => this.laneBusy[l] > s).length < 2;
 
       if (r < 0.20) {                                   // barriers on 1-2 lanes
-        const n = Math.random() < 0.35 + diff * 0.3 ? 2 : 1;
+        const n = Math.min(Math.random() < 0.35 + diff * 0.3 ? 2 : 1, free.length);
         for (let i = 0; i < n; i++) this._addBarrier(lane(), s);
         this._maybeCoinArc(free[0], s);
       } else if (r < 0.36) {                            // roll gantries
-        const n = Math.random() < 0.3 + diff * 0.3 ? 2 : 1;
+        const n = Math.min(Math.random() < 0.3 + diff * 0.3 ? 2 : 1, free.length);
         for (let i = 0; i < n; i++) this._addGantry(lane(), s);
       } else if (r < 0.62) {                            // parked train(s)
         const n = Math.random() < 0.25 + diff * 0.45 ? 2 : 1;
@@ -228,18 +239,24 @@ export class World {
           const cars = Math.random() < 0.4 ? 2 : 1;
           this._addTrain(ln, s + Math.random() * 8, cars, Math.random() < 0.42);
         }
-        if (free.length) this._maybeCoinLine(free[0], s - 6, 8);
+        if (free.length) this._maybeCoinLine(free[0], s - 6, Math.min(8, lineMax));
       } else if (r < 0.62 + 0.16 * (0.3 + diff)) {      // moving train
-        this._addMovingTrain(lane(), dist, speed);
-        if (free.length) this._maybeCoinLine(free[0], s, 7);
+        const cand = free.filter(l => this._laneClearAhead(l, dist));
+        if (cand.length) {
+          const ln = cand[(Math.random() * cand.length) | 0];
+          free.splice(free.indexOf(ln), 1);
+          this._addMovingTrain(ln, dist, speed);
+          if (free.length) this._maybeCoinLine(free[0], s, Math.min(7, lineMax));
+        } else {
+          this._maybeCoinLine(lane(), s, Math.min(8, lineMax), true);
+        }
       } else if (r < 0.86) {                            // mixed row
         if (canTrain() && free.length) this._addTrain(lane(), s, 1, Math.random() < 0.3);
         if (Math.random() < 0.7 && free.length) this._addBarrier(lane(), s + 4);
       } else {                                          // breather + coins
-        this._maybeCoinLine(lane(), s, 10, true);
+        this._maybeCoinLine(lane(), s, Math.min(10, lineMax), true);
       }
-      const gap = 26 - diff * 8 + Math.random() * 14;
-      this.spawnS += Math.max(17, gap);
+      this.spawnS += gap;
     }
   }
 
@@ -264,7 +281,10 @@ export class World {
   _addTrain(laneI, s, cars, ramp) {
     const inst = this._take(this.trains); if (inst == null) return;
     const o = { kind: 'train', lane: laneI, s0: s, s1: s + cars * CAR_LEN, top: TRAIN_TOP, inst, inst2: null, rampInst: null };
-    if (cars === 2) { o.inst2 = this._take(this.trains); }
+    if (cars === 2) {
+      o.inst2 = this._take(this.trains);
+      if (o.inst2 == null) o.s1 = s + CAR_LEN;   // пул исчерпан: не оставлять невидимый вагон-убийцу
+    }
     const col = this.trainColors[(Math.random() * this.trainColors.length) | 0];
     this._paint(inst, col); this._paint(o.inst2, col);
     this.laneBusy[laneI] = Math.max(this.laneBusy[laneI], o.s1 + 6);
@@ -290,9 +310,23 @@ export class World {
       light: this.headlights.find(h => !h.visible) || null,
     };
     o.s1 = o.s0 + o.len;
-    if (o.light) o.light.visible = true;
+    if (o.light) {
+      o.light.visible = true;
+      // у попутного состава ближний к игроку торец — хвост: красный габарит вместо фары
+      o.light.material.color.setHex(sameDir ? 0xff6655 : 0xffeebb);
+      o.light.scale.setScalar(sameDir ? 1.5 : 2.4);
+    }
     const col = this.trainColors[(Math.random() * this.trainColors.length) | 0];
     this._paint(inst, col); this._paint(inst2, col);
+    this.movingCount[laneI]++;
+    // подмести монеты с пути состава, чтобы он не проезжал сквозь них
+    for (const c of this.coinList) {
+      if (!c.taken && c.lane === laneI && c.s > dist) {
+        c.taken = true;
+        this.coins.mesh.setMatrixAt(c.inst, this.coins.zero);
+        this.coins.free.push(c.inst);
+      }
+    }
     this.obstacles.push(o);
   }
 
@@ -310,6 +344,7 @@ export class World {
   _maybeCoinArc(laneI, s) {
     if (laneI == null && Math.random() < 0.5) return;
     const ln = laneI ?? (Math.random() * 3) | 0;
+    if (this.laneBusy[ln] > s - 3 || this.movingCount[ln] > 0) return; // не сыпать монеты внутрь поезда
     for (let i = 0; i < 7; i++) {
       const f = i / 6, y = 0.95 + Math.sin(f * Math.PI) * 1.25;
       this._addCoin(ln, s - 4.5 + f * 9, y);
@@ -344,9 +379,9 @@ export class World {
         o.s0 -= o.v * dt; o.s1 = o.s0 + o.len;
         const dz = o.s0 - dist;
         if (o.v > 0 && !o.honked && dz < 150 && dz > 0) { o.honked = true; this.onHorn && this.onHorn(); }
-        const dNear = Math.max(0, Math.min(Math.abs(o.s0 - dist), Math.abs(o.s1 - dist)));
-        if (o.s0 < dist && o.s1 > dist) { /* passing right now */ }
-        const dd = (o.s0 <= dist && o.s1 >= dist) ? 0 : dNear;
+        const dd = (o.s0 <= dist && o.s1 >= dist)
+          ? 0
+          : Math.min(Math.abs(o.s0 - dist), Math.abs(o.s1 - dist));
         if (dd < nearestT) { nearestT = dd; nearestPan = (o.lane - 1) * 0.8; }
       }
       const gone = o.kind === 'mtrain'
@@ -605,7 +640,7 @@ function buildVariant(biome, vi, world) {
         B.box(B.atlas, 1.1, 7.6, 0.5, side * 9.1, 3.5, Z(s), 0x4c4f57);
         B.box(B.glow, 0.1, 0.5, 2.4, side * 8.85, 4.4, Z(s + 4), 0xffe9b0);     // wall lamps
       }
-      B.box(B.win, 1.4, 2.2, 2.0, side * 8.5, 1.4, Z(L * (0.3 + side * 0.2) + 8), 0x8b8f98); // service niche
+      B.box(B.atlas, 1.4, 2.2, 2.0, side * 8.5, 1.4, Z(L * (0.3 + side * 0.2) + 8), 0x8b8f98, REG.concrete); // service niche
     }
     B.box(B.atlas, 19.4, 0.7, L, 0, 7.0, -L / 2, 0x46494f, REG.concrete);
     for (let s = 2; s < L; s += 8) {

@@ -67,17 +67,22 @@ const speedLines = (() => {
 // --------------------------------------------------------------------- state
 const ST = { LOADING: 0, TITLE: 1, RUN: 2, DEAD: 3 };
 const GHOST = new URLSearchParams(location.search).has('ghost');
+// localStorage бросает исключения в приватном режиме Safari — не дать этому уронить игру
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+};
 let state = ST.LOADING;
-let dist = 0, speed = 0, score = 0, coinsGot = 0, best = +(localStorage.getItem('mr_best') || 0);
+let dist = 0, speed = 0, score = 0, coinsGot = 0, best = +store.get('mr_best', 0);
 let timeAlive = 0, deadT = 0, slowmo = 1, milestone = 500, paused = false;
-let camYaw = 0, runT = 0;
+let camYaw = 0, runT = 0, tunnelF = 0;
 
 $('bestVal').textContent = best;
 
 function startRun() {
   world.reset();
   player.reset();
-  dist = 0; speed = 8.5; score = 0; coinsGot = 0; timeAlive = 0; milestone = 500; slowmo = 1;
+  dist = 0; speed = 8.5; score = 0; coinsGot = 0; timeAlive = 0; milestone = 500; slowmo = 1; tunnelF = 0;
   player.startRun();
   $('score').textContent = '0';
   $('coins').textContent = '0';
@@ -101,7 +106,7 @@ function die() {
   fx.burst(new THREE.Vector3(player.x, player.y + 0.6, 0), 0xcccccc, 14, 5, 0.6, 0.7, 6);
   if (navigator.vibrate) navigator.vibrate(120);
   best = Math.max(best, Math.floor(score));
-  localStorage.setItem('mr_best', best);
+  store.set('mr_best', best);
 }
 
 function showGameOver() {
@@ -162,6 +167,7 @@ function togglePause() {
   paused = !paused;
   $('pauseBtn').textContent = paused ? '▶' : 'II';
   $('pausedLbl').classList.toggle('hidden', !paused);
+  audio.setAmbPaused(paused);
   if (paused) audio.stopMusic(); else { audio.unlock(); audio.startMusic(); }
 }
 function toggleMute() {
@@ -201,23 +207,27 @@ function updateCamera(dt, t) {
 }
 
 // ------------------------------------------------------------------ FPS + dpr
-let fpsAcc = 0, fpsN = 0, fpsShown = 0, govT = 0;
+// Гувернёр калибруется по пиковому fps устройства: на 120-герцовом экране
+// просадка до ~85 уже считается поводом снизить разрешение, на 60-герцовом — нет.
+let fpsAcc = 0, fpsN = 0, fpsShown = 0, govT = 0, fpsPeak = 0;
 function fpsTick(dt) {
   fpsAcc += dt; fpsN++;
   if (fpsAcc >= 0.5) {
     fpsShown = Math.round(fpsN / fpsAcc);
+    fpsPeak = Math.max(fpsPeak, fpsShown);
     $('fps').textContent = fpsShown;
     fpsAcc = 0; fpsN = 0;
   }
   govT += dt;
   if (govT > 3) {
     govT = 0;
-    const target = 1000 / Math.max(60, fpsShown + 5);
-    if (fpsShown && fpsShown < 55 && dprCap > 1) {
+    const devMax = Math.min(window.devicePixelRatio || 1, 2);
+    const lowThr = fpsPeak >= 110 ? 88 : fpsPeak >= 80 ? 65 : 50;
+    if (fpsShown && fpsShown < lowThr && dprCap > 1) {
       dprCap = Math.max(1, dprCap - 0.25);
       renderer.setPixelRatio(dprCap);
-    } else if (fpsShown > 100 && dprCap < Math.min(window.devicePixelRatio || 1, 2)) {
-      dprCap = Math.min(dprCap + 0.25, Math.min(window.devicePixelRatio || 1, 2));
+    } else if (fpsShown > lowThr + 24 && dprCap < devMax) {
+      dprCap = Math.min(dprCap + 0.25, devMax);
       renderer.setPixelRatio(dprCap);
     }
   }
@@ -266,12 +276,16 @@ function frame(now) {
     }
   }
 
-  const env = sky.update(dt, camera, world.inTunnel(dist));
+  // плавный вход/выход тоннеля, чтобы туман не «хлопал» на портале
+  tunnelF += (world.inTunnel(dist) - tunnelF) * Math.min(1, dt * 3);
+  const env = sky.update(dt, camera, tunnelF);
   const info = world.update(gdt, dist, speed, env);
 
   player.update(gdt, world, dist, speed, {
     onLand: () => { audio.land(); fx.dust(new THREE.Vector3(player.x, player.y + 0.05, 0), 6); },
     onStep: () => fx.dust(new THREE.Vector3(player.x, player.y + 0.02, 0), 1),
+    onJump: () => { audio.jump(); fx.dust(new THREE.Vector3(player.x, player.y, 0), 4); },
+    onRoll: () => audio.roll(),
   });
 
   if (state === ST.RUN) {

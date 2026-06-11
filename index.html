@@ -59,7 +59,7 @@
     animation: pulse 1.4s ease-in-out infinite;
   }
   @keyframes pulse { 50% { transform: scale(1.06); } }
-  .hints { display: flex; gap: 18px; margin-top: 30px; font-size: clamp(11px, 3vw, 14px); opacity: .9; }
+  .hints { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 14px; margin-top: 30px; font-size: clamp(11px, 3vw, 14px); opacity: .9; }
   .hints span { background: rgba(8,12,40,.55); border: 1px solid rgba(255,255,255,.22); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(4px); }
   .best { margin-top: 22px; font-size: clamp(14px, 4vw, 18px); color: #ffd34d; text-shadow: 0 2px 6px #000; }
   .credits { position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); font-size: 10px; opacity: .55; }

@@ -7,7 +7,9 @@ const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 export class AudioSys {
   constructor() {
     this.ctx = null;
-    this.muted = localStorage.getItem('mr_muted') === '1';
+    let m = null;
+    try { m = localStorage.getItem('mr_muted'); } catch { /* private mode */ }
+    this.muted = m === '1';
     this.musicOn = false;
     this._step = 0;
     this._nextT = 0;
@@ -63,8 +65,14 @@ export class AudioSys {
 
   setMuted(m) {
     this.muted = m;
-    localStorage.setItem('mr_muted', m ? '1' : '0');
+    try { localStorage.setItem('mr_muted', m ? '1' : '0'); } catch { /* private mode */ }
     if (this.ctx) this.master.gain.linearRampToValueAtTime(m ? 0 : 0.9, this.ctx.currentTime + 0.15);
+  }
+
+  // на паузе дождь/ветер/грохот не должны продолжать шуметь
+  setAmbPaused(p) {
+    if (!this.ctx) return;
+    this.ambBus.gain.linearRampToValueAtTime(p ? 0 : 1, this.ctx.currentTime + 0.2);
   }
 
   // ------------------------------------------------------------------ music
