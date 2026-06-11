@@ -4,6 +4,13 @@
 
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
+// музыкальный характер каждого мира: тоники, тембры
+const MUSIC_WORLDS = [
+  { roots: [45, 45, 41, 43, 45, 45, 48, 43], lead: 'square', bass: 'sawtooth' },   // город
+  { roots: [43, 43, 39, 41, 43, 46, 43, 41], lead: 'triangle', bass: 'square' },   // каньон
+  { roots: [40, 40, 43, 38, 40, 40, 45, 47], lead: 'sawtooth', bass: 'sawtooth' }, // неон
+];
+
 export class AudioSys {
   constructor() {
     this.ctx = null;
@@ -11,10 +18,13 @@ export class AudioSys {
     try { m = localStorage.getItem('mr_muted'); } catch { /* private mode */ }
     this.muted = m === '1';
     this.musicOn = false;
+    this.worldIdx = 0;
     this._step = 0;
     this._nextT = 0;
     this._timer = null;
   }
+
+  setWorld(i) { this.worldIdx = i % MUSIC_WORLDS.length; }
 
   unlock() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
@@ -98,8 +108,8 @@ export class AudioSys {
 
   _schedStep(s, t) {
     const ctx = this.ctx, bar = (s >> 4) % 8, st = s & 15;
-    const ROOTS = [45, 45, 41, 43, 45, 45, 48, 43]; // A A F G A A C G
-    const root = ROOTS[bar];
+    const MW = MUSIC_WORLDS[this.worldIdx];
+    const root = MW.roots[bar];
     // kick on quarters
     if (st % 4 === 0) this._kick(t);
     // snare on 2 & 4
@@ -151,7 +161,7 @@ export class AudioSys {
 
   _bass(freq, t, dur) {
     const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
-    o.type = 'sawtooth'; o.frequency.value = freq;
+    o.type = MUSIC_WORLDS[this.worldIdx].bass; o.frequency.value = freq;
     f.type = 'lowpass'; f.frequency.setValueAtTime(700, t); f.frequency.exponentialRampToValueAtTime(220, t + dur);
     g.gain.setValueAtTime(0.30, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(f); f.connect(g); g.connect(this.musBus);
@@ -160,7 +170,7 @@ export class AudioSys {
 
   _lead(freq, t, dur, vol) {
     const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = 'square'; o.frequency.value = freq;
+    o.type = MUSIC_WORLDS[this.worldIdx].lead; o.frequency.value = freq;
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g); g.connect(this.musBus); g.connect(this.delay);
     o.start(t); o.stop(t + dur + 0.02);
@@ -225,7 +235,7 @@ export class AudioSys {
   // подбор бустера: восходящее арпеджио, у каждого типа своя тоника
   pickup(type) {
     if (!this.ctx) return; const t = this.ctx.currentTime;
-    const base = { magnet: 523, shield: 392, x2: 659, boot: 587 }[type] || 523;
+    const base = { magnet: 523, shield: 392, x2: 659, boot: 587, jet: 698, slow: 440, bag: 554, star: 784 }[type] || 523;
     [1, 1.26, 1.5].forEach((k, i) => {
       const o = this.ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = base * k;
       o.connect(this._env(0.2, 0.14, t + i * 0.055));

@@ -1,8 +1,8 @@
 // Boot, game loop, camera, input, UI glue, FPS governor.
 import * as THREE from 'three';
-import { makeAtlas, makeWindows, makeGlow, makeShadow, makeSpeedlines, makeGround, makeCoin } from './atlas.js';
-import { curveUniform } from './curveworld.js';
-import { World, LANE_W } from './world.js';
+import { makeAtlas, makeWindows, makeGlow, makeShadow, makeSpeedlines, makeGround, makeCoin, makeToonGradient } from './atlas.js';
+import { curveUniform, wobbleTime } from './curveworld.js';
+import { World, LANE_W, THEMES } from './world.js';
 import { Player } from './player.js';
 import { Sky } from './sky.js';
 import { FX } from './fx.js';
@@ -36,14 +36,14 @@ resize();
 // ------------------------------------------------------------------- systems
 const tex = {
   atlas: makeAtlas(), glow: makeGlow(), shadow: makeShadow(), lines: makeSpeedlines(),
-  ground: makeGround(), coin: makeCoin(),
+  ground: makeGround(), coin: makeCoin(), toonGrad: makeToonGradient(),
 };
 [tex.windows, tex.windowsE] = makeWindows('glass');
 [tex.windowsB, tex.windowsBE] = makeWindows('brick');
 
 const sky = new Sky(scene);
 const world = new World(scene, tex);
-const player = new Player(scene, tex.shadow);
+const player = new Player(scene, tex.shadow, tex.toonGrad);
 const fx = new FX(scene);
 const audio = new AudioSys();
 
@@ -84,7 +84,11 @@ let camYaw = 0, runT = 0, tunnelF = 0;
 // ------------------------------------------------- мета: банк, скины, лидеры
 const jget = (k, d) => { try { return JSON.parse(store.get(k, JSON.stringify(d))); } catch { return d; } };
 let bank = +store.get('mr_bank', 0);
-let playerName = store.get('mr_name', 'БЕГУН');
+let playerName = store.get('mr_name', '');
+if (!playerName) {       // уникальный ник по умолчанию для мировой таблицы
+  playerName = 'БЕГУН-' + (100 + Math.floor(Math.random() * 900));
+  store.set('mr_name', playerName);
+}
 let board = jget('mr_board', []);
 let owned = jget('mr_owned', ['classic']);
 let curSkin = store.get('mr_skin', 'classic');
@@ -99,17 +103,46 @@ const SKINS = [
   { id: 'ghost', name: 'ПРИЗРАК', price: 900, primary: 0xbcd8ff, secondary: 0xe2f1ff, glow: 0x9fc8ff, glowInt: 0.75, opacity: 0.55, prev: ['#9fc8ff', '#f0f8ff'] },
 ];
 
+// настоящие НОВЫЕ персонажи (процедурные риги), не рескины
+const CHARS = [
+  { id: 'robot', name: 'РОБО', price: 0, prev: ['#d84b4b', '#ececec'] },
+  { id: 'cat', name: 'КОТ БАТОН', price: 1200, prev: ['#f09a3e', '#ffe4c0'] },
+  { id: 'ninja', name: 'НИНДЗЯ', price: 2200, prev: ['#2c3460', '#e04848'] },
+  { id: 'capy', name: 'КАПИБАРА', price: 3500, prev: ['#9a6a42', '#ff9a28'] },
+];
+let ownedChars = jget('mr_chars', ['robot']);
+let curChar = store.get('mr_char', 'robot');
+
+// миры: каждые 50 000 очков сеттинг полностью меняется (бесшовно)
+const WORLD_LEN = 50000;
+const startWorld = Math.min(THEMES.length - 1, Math.max(0, +(new URLSearchParams(location.search).get('world') || 0)));
+let curWorld = -1;
+function applyWorld(i, silent = false) {
+  const w = i % THEMES.length;
+  if (w === curWorld) return;
+  curWorld = w;
+  world.setWorld(w);
+  sky.setWorld(w);
+  audio.setWorld(w);
+  if (!silent) {
+    toast(`МИР: ${THEMES[w].name}!`);
+    audio.milestone();
+    fx.confetti(new THREE.Vector3(player.x, 1.5, -3));
+  }
+}
+
 // бустеры текущего забега
-const boost = { magnet: 0, x2: 0, boot: 0, shield: false };
-let invulnT = 0, magnetFxT = 0;
+const boost = { magnet: 0, x2: 0, boot: 0, jet: 0, slow: 0, shield: false };
+let invulnT = 0, magnetFxT = 0, jetFxT = 0;
 
 $('bestVal').textContent = best;
 
 function startRun() {
+  applyWorld(startWorld, true);
   world.reset();
   player.reset();
   dist = 0; speed = 8.5; score = 0; coinsGot = 0; timeAlive = 0; milestone = 500; slowmo = 1; tunnelF = 0; camGround = 0;
-  boost.magnet = 0; boost.x2 = 0; boost.boot = 0; boost.shield = false;
+  boost.magnet = 0; boost.x2 = 0; boost.boot = 0; boost.jet = 0; boost.slow = 0; boost.shield = false;
   invulnT = 0;
   player.setShield(false);
   player.startRun();
@@ -150,6 +183,19 @@ function die() {
   board = board.slice(0, 10);
   lastRank = board.indexOf(entry);
   store.set('mr_board', JSON.stringify(board));
+  // мировая таблица: отправляем лучший результат ника (асинхронно, без блокировки)
+  gbSubmit({ n: playerName, s: Math.floor(score), c: coinsGot, w: curWorld, d: Date.now() })
+    .then(() => { if (state === ST.DEAD && gboard) fillGoBoard(); });
+}
+
+function fillGoBoard() {
+  const list = (gboard && gboard.length ? gboard : board).slice(0, 5);
+  const isG = !!(gboard && gboard.length);
+  $('goBoard').innerHTML =
+    `<div class="bhead">${isG ? '🌍 мировой топ' : 'лучшие на устройстве'}</div>` +
+    list.map((e, i) =>
+      `<div class="brow${(isG ? e.n === playerName : i === lastRank) ? ' me' : ''}"><b>${i + 1}</b><span>${esc(e.n)}</span><i>${e.s}</i></div>`
+    ).join('');
 }
 
 function showGameOver() {
@@ -157,10 +203,7 @@ function showGameOver() {
   $('goCoins').textContent = coinsGot;
   $('goBest').textContent = best;
   $('goBank').textContent = bank;
-  // мини-топ-5 с подсветкой свежего результата
-  $('goBoard').innerHTML = board.slice(0, 5).map((e, i) =>
-    `<div class="brow${i === lastRank ? ' me' : ''}"><b>${i + 1}</b><span>${esc(e.n)}</span><i>${e.s}</i></div>`
-  ).join('');
+  fillGoBoard();           // мировой топ-5 (или локальный, пока грузится)
   $('gameover').classList.remove('hidden');
   $('hud').classList.add('hidden');
 }
@@ -310,7 +353,9 @@ function frame(now) {
     slowmo += (1 - slowmo) * Math.min(1, dt * 1.2);
     if (deadT > 1.05 && $('gameover').classList.contains('hidden')) showGameOver();
   }
-  const gdt = dt * (state === ST.DEAD ? slowmo : 1);
+  let gdt = dt * (state === ST.DEAD ? slowmo : 1);
+  if (state === ST.RUN && boost.slow > 0) gdt *= 0.55;   // ⏳ слоу-мо
+  wobbleTime.value = t;                                  // «желе»-колыхание мира
 
   // curve wander — the "running around a corner" feel
   const cT = Math.sin(t * 0.10) * 0.9 + Math.sin(t * 0.041 + 1.7) * 0.6;
@@ -326,15 +371,34 @@ function frame(now) {
     dist += speed * gdt;
     worldDelta = dist - prev;
 
-    // бустеры: таймеры и эффекты
-    boost.magnet = Math.max(0, boost.magnet - gdt);
-    boost.x2 = Math.max(0, boost.x2 - gdt);
-    boost.boot = Math.max(0, boost.boot - gdt);
-    invulnT = Math.max(0, invulnT - gdt);
+    // бустеры: таймеры тикают реальным временем (иначе слоу-мо продлевал бы сам себя)
+    boost.magnet = Math.max(0, boost.magnet - dt);
+    boost.x2 = Math.max(0, boost.x2 - dt);
+    boost.boot = Math.max(0, boost.boot - dt);
+    boost.jet = Math.max(0, boost.jet - dt);
+    boost.slow = Math.max(0, boost.slow - dt);
+    invulnT = Math.max(0, invulnT - dt);
     player.boostJump = boost.boot > 0;
+    player.flying = boost.jet > 0;
     player.setShield(boost.shield);
     const mult = boost.x2 > 0 ? 2 : 1;
-    score += speed * gdt * mult;
+    // очки растут с дистанцией (как множитель в раннерах) — миры сменяются за разумное время
+    score += speed * gdt * mult * (1 + dist / 2000);
+
+    // 🚀 джетпак: шлейф пламени
+    if (boost.jet > 0) {
+      jetFxT -= dt;
+      if (jetFxT <= 0) {
+        jetFxT = 0.05;
+        fx.spawn(player.x + (Math.random() - .5) * 0.3, player.y + 0.45, 0.35,
+          (Math.random() - .5) * 1.5, -4 - Math.random() * 3, 2.5,
+          new THREE.Color(Math.random() < 0.5 ? 0xffb13d : 0xff6a3d), 0.8, 0.45, -2);
+      }
+    }
+
+    // смена мира каждые WORLD_LEN очков — бесшовно
+    const wantWorld = (startWorld + Math.floor(score / WORLD_LEN)) % THEMES.length;
+    if (wantWorld !== curWorld) applyWorld(wantWorld);
 
     // магнит: лёгкие искры вокруг игрока
     if (boost.magnet > 0) {
@@ -370,8 +434,8 @@ function frame(now) {
 
   if (state === ST.RUN) {
     const mult = boost.x2 > 0 ? 2 : 1;
-    // coins (магнит расширяет радиус сбора)
-    const got = world.collect(dist, player.x, player.y, boost.magnet > 0 ? 3.1 : 0);
+    // coins (магнит и джетпак расширяют радиус сбора)
+    const got = world.collect(dist, player.x, player.y, (boost.magnet > 0 || boost.jet > 0) ? 3.2 : 0);
     if (got) {
       coinsGot += got;
       score += got * 25 * mult;
@@ -391,11 +455,26 @@ function frame(now) {
       if (pkType === 'magnet') boost.magnet = 8;
       else if (pkType === 'x2') boost.x2 = 10;
       else if (pkType === 'boot') boost.boot = 8;
+      else if (pkType === 'jet') boost.jet = 7;
+      else if (pkType === 'slow') boost.slow = 6;
       else if (pkType === 'shield') boost.shield = true;
-      toast({ magnet: '🧲 МАГНИТ!', x2: '×2 ОЧКИ!', boot: '👟 ПРЫЖОК!', shield: '🛡 ЩИТ!' }[pkType]);
+      else if (pkType === 'bag') {            // 💰 мешок: мгновенно +40 монет
+        coinsGot += 40;
+        score += 40 * 25 * mult;
+        audio.coin();
+        $('coins').textContent = coinsGot;
+        fx.burst(new THREE.Vector3(player.x, player.y + 1.4, 0), 0xffd34d, 30, 5.5, 0.6, 0.9, 5);
+      } else if (pkType === 'star') {          // ⭐ звезда: мгновенно +2000 очков
+        score += 2000;
+        fx.confetti(new THREE.Vector3(player.x, 1.4, -2));
+      }
+      toast({
+        magnet: '🧲 МАГНИТ!', x2: '×2 ОЧКИ!', boot: '👟 ПРЫЖОК!', shield: '🛡 ЩИТ!',
+        jet: '🚀 ДЖЕТПАК!', slow: '⏳ ЗАМЕДЛЕНИЕ!', bag: '💰 +40 МОНЕТ!', star: '⭐ +2000!',
+      }[pkType]);
     }
-    // collision (?ghost=1 disables death — debug fly-through)
-    if (!GHOST && invulnT <= 0 && world.collide(dist, player.x, player.y, player.rolling > 0)) {
+    // collision (джетпак летит над всем; ?ghost=1 — отладочный полёт)
+    if (!GHOST && invulnT <= 0 && boost.jet <= 0 && world.collide(dist, player.x, player.y, player.rolling > 0)) {
       if (boost.shield) {
         // щит спасает: хлопок, неуязвимость и прыжок на крышу
         boost.shield = false;
@@ -442,9 +521,9 @@ function toast(msg) {
 }
 
 // --------------------------------------------------------- мета-UI: магазин/лидеры
-const BOOST_DUR = { magnet: 8, x2: 10, boot: 8 };
+const BOOST_DUR = { magnet: 8, x2: 10, boot: 8, jet: 7, slow: 6 };
 function updateBoostHud() {
-  for (const k of ['magnet', 'x2', 'boot']) {
+  for (const k of ['magnet', 'x2', 'boot', 'jet', 'slow']) {
     const el = $('bc-' + k);
     const v = boost[k];
     el.classList.toggle('hidden', v <= 0);
@@ -460,46 +539,115 @@ function applySkinById(id) {
   player.applySkin(def);
 }
 
+function selectChar(id) {
+  curChar = id;
+  store.set('mr_char', id);
+  player.setCharacter(id);
+}
+
+const cell = (s, sel, own) => {
+  const status = sel ? '✓ ВЫБРАН' : own ? 'ВЫБРАТЬ' : `🪙 ${s.price}`;
+  return `<div class="skin${sel ? ' sel' : ''}${own ? '' : ' locked'}" data-id="${s.id}">
+    <div class="chip" style="background:linear-gradient(135deg, ${s.prev[0]}, ${s.prev[1]})"></div>
+    <b>${s.name}</b><span>${status}</span></div>`;
+};
+
 function renderShop() {
   $('bankVal2').textContent = bank;
-  $('shopGrid').innerHTML = SKINS.map(s => {
-    const own = owned.includes(s.id), sel = curSkin === s.id;
-    const status = sel ? '✓ ВЫБРАН' : own ? 'ВЫБРАТЬ' : `🪙 ${s.price}`;
-    return `<div class="skin${sel ? ' sel' : ''}${own ? '' : ' locked'}" data-id="${s.id}">
-      <div class="chip" style="background:linear-gradient(135deg, ${s.prev[0]}, ${s.prev[1]})"></div>
-      <b>${s.name}</b><span>${status}</span></div>`;
-  }).join('');
+  $('charGrid').innerHTML = CHARS.map(c =>
+    cell(c, curChar === c.id, ownedChars.includes(c.id))).join('');
+  $('shopGrid').innerHTML = SKINS.map(s =>
+    cell(s, curChar === 'robot' && curSkin === s.id, owned.includes(s.id))).join('');
 }
+
+// ----------------------------------------------- глобальная таблица лидеров
+// Бэкенд: kvdb.io — у каждого ника свой ключ с лучшим результатом.
+// Запись — простой POST (без CORS-префлайта), чтение — листинг с values.
+// Офлайн или недоступно → локальная таблица.
+const GB_URL = 'https://kvdb.io/WLdWnAo6PDgKQMQTaVdD2L';
+let gboard = null, gbBusy = false;
+
+async function gbLoad() {
+  const r = await fetch(GB_URL + '/?values=true&format=json', { cache: 'no-store' });
+  const arr = await r.json();
+  gboard = arr.map(([n, v]) => {
+    try { const e = JSON.parse(v); return { n, s: +e.s || 0, c: e.c | 0, w: e.w | 0 }; }
+    catch { return null; }
+  }).filter(Boolean).sort((a, b) => b.s - a.s).slice(0, 100);
+  return gboard;
+}
+
+async function gbSubmit(entry) {
+  if (gbBusy) return;
+  gbBusy = true;
+  try {
+    if (!gboard) { try { await gbLoad(); } catch { /* офлайн */ } }
+    const mine = gboard && gboard.find(e => e.n === entry.n);
+    if (!mine || entry.s > mine.s) {
+      await fetch(GB_URL + '/' + encodeURIComponent(entry.n.slice(0, 24)), {
+        method: 'POST',
+        body: JSON.stringify({ s: entry.s, c: entry.c, w: entry.w, d: entry.d }),
+      });
+      await gbLoad();
+    }
+  } catch { /* офлайн — останется локальная таблица */ }
+  gbBusy = false;
+}
+
+let boardTab = 'world';
+const rows = (list, hl) => list.map((e, i) =>
+  `<div class="brow${hl(e, i) ? ' me' : ''}"><b>${i + 1}</b><span>${esc(e.n)}</span><i>${e.s}</i></div>`).join('');
 
 function renderBoard() {
   $('boardName').textContent = playerName;
-  $('boardList').innerHTML = board.length
-    ? board.map((e, i) =>
-      `<div class="brow${i === lastRank ? ' me' : ''}"><b>${i + 1}</b><span>${esc(e.n)}</span><i>${e.s}</i></div>`).join('')
-    : '<div class="bempty">Пока пусто — пробеги первый забег!</div>';
+  $('tabLocal').classList.toggle('on', boardTab === 'local');
+  $('tabWorld').classList.toggle('on', boardTab === 'world');
+  if (boardTab === 'local') {
+    $('boardList').innerHTML = board.length
+      ? rows(board, (e, i) => i === lastRank)
+      : '<div class="bempty">Пока пусто — пробеги первый забег!</div>';
+  } else {
+    if (gboard) {
+      $('boardList').innerHTML = gboard.length
+        ? rows(gboard.slice(0, 20), (e) => e.n === playerName)
+        : '<div class="bempty">Стань первым в мире!</div>';
+    } else {
+      $('boardList').innerHTML = '<div class="bempty">Загрузка мировой таблицы…</div>';
+      gbLoad().then(() => { if (boardTab === 'world') renderBoard(); })
+        .catch(() => { $('boardList').innerHTML = '<div class="bempty">Не удалось загрузить — офлайн?</div>'; });
+    }
+  }
 }
 
-$('shopGrid').addEventListener('pointerup', (e) => {
-  const cell = e.target.closest('.skin');
-  if (!cell) return;
+// покупка/выбор: персонажи и скины робота
+function shopClick(el, defs, ownedList, ownedKey, onSelect) {
   audio.unlock();
-  const def = SKINS.find(s => s.id === cell.dataset.id);
-  if (owned.includes(def.id)) {
-    applySkinById(def.id);
+  const def = defs.find(s => s.id === el.dataset.id);
+  if (!def) return;
+  if (ownedList.includes(def.id)) {
+    onSelect(def);
     audio.click();
   } else if (bank >= def.price) {
     bank -= def.price;
     store.set('mr_bank', bank);
-    owned.push(def.id);
-    store.set('mr_owned', JSON.stringify(owned));
-    applySkinById(def.id);
+    ownedList.push(def.id);
+    store.set(ownedKey, JSON.stringify(ownedList));
+    onSelect(def);
     audio.buy();
     $('bankVal').textContent = bank;
   } else {
     audio.click();
-    cell.classList.remove('deny'); void cell.offsetWidth; cell.classList.add('deny');
+    el.classList.remove('deny'); void el.offsetWidth; el.classList.add('deny');
   }
   renderShop();
+}
+$('shopGrid').addEventListener('pointerup', (e) => {
+  const el = e.target.closest('.skin');
+  if (el) shopClick(el, SKINS, owned, 'mr_owned', (def) => { selectChar('robot'); applySkinById(def.id); });
+});
+$('charGrid').addEventListener('pointerup', (e) => {
+  const el = e.target.closest('.skin');
+  if (el) shopClick(el, CHARS, ownedChars, 'mr_chars', (def) => selectChar(def.id));
 });
 
 $('btnShop').addEventListener('pointerup', () => { audio.unlock(); audio.click(); renderShop(); $('shop').classList.remove('hidden'); });
@@ -509,18 +657,22 @@ $('boardClose').addEventListener('pointerup', () => { audio.click(); $('board').
 $('goBoardBtn').addEventListener('pointerup', (e) => { e.stopPropagation(); audio.click(); renderBoard(); $('board').classList.remove('hidden'); });
 $('goShopBtn').addEventListener('pointerup', (e) => { e.stopPropagation(); audio.click(); renderShop(); $('shop').classList.remove('hidden'); });
 $('btnRename').addEventListener('pointerup', () => {
-  const nm = prompt('Имя для таблицы лидеров:', playerName);
+  const nm = prompt('Ник для мировой таблицы:', playerName);
   if (nm && nm.trim()) {
     playerName = nm.trim().slice(0, 14);
     store.set('mr_name', playerName);
     renderBoard();
   }
 });
+$('tabLocal').addEventListener('pointerup', () => { boardTab = 'local'; renderBoard(); });
+$('tabWorld').addEventListener('pointerup', () => { boardTab = 'world'; renderBoard(); });
 $('bankVal').textContent = bank;
 
 // ---------------------------------------------------------------------- boot
+applyWorld(startWorld, true);
 player.load().then(() => {
   state = ST.TITLE;
+  player.setCharacter(curChar);
   applySkinById(curSkin);
   player.idleDance();
   $('loading').classList.add('hidden');

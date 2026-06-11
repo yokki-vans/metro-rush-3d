@@ -5,24 +5,54 @@ import { makeCloud } from './atlas.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 
-// keyframes over t∈[0,1): sunrise→noon→sunset→night
-const KEYS = [
-  { t: 0.00, top: 0x2a3a6e, hor: 0xff9a5a, sun: 0xffb36b, dir: 0.55, hemi: 0.50 },
-  { t: 0.07, top: 0x3f7fd9, hor: 0xbfe3ff, sun: 0xfff3d6, dir: 1.00, hemi: 0.80 },
-  { t: 0.25, top: 0x2f6fe0, hor: 0xcfeaff, sun: 0xffffff, dir: 1.15, hemi: 0.95 },
-  { t: 0.42, top: 0x3a5fae, hor: 0xffc070, sun: 0xffd9a0, dir: 0.85, hemi: 0.70 },
-  { t: 0.50, top: 0x232a55, hor: 0xff7040, sun: 0xff9460, dir: 0.45, hemi: 0.45 },
-  { t: 0.58, top: 0x0b1030, hor: 0x2a3560, sun: 0xbdd2ff, dir: 0.22, hemi: 0.22 },
-  { t: 0.75, top: 0x050818, hor: 0x101a38, sun: 0xb9cdfd, dir: 0.20, hemi: 0.16 },
-  { t: 0.93, top: 0x0b1030, hor: 0x252a55, sun: 0xc9d6ff, dir: 0.22, hemi: 0.22 },
-  { t: 1.00, top: 0x2a3a6e, hor: 0xff9a5a, sun: 0xffb36b, dir: 0.55, hemi: 0.50 },
+// keyframes over t∈[0,1) для каждого мира; ночи светлые и цветные — мультяшные,
+// а не кромешная тьма
+const WORLD_KEYS = [
+  [ // 0 — ГОРОД
+    { t: 0.00, top: 0x3a4a8e, hor: 0xffa56b, sun: 0xffb36b, dir: 0.60, hemi: 0.60 },
+    { t: 0.07, top: 0x4f8fe8, hor: 0xc8e8ff, sun: 0xfff3d6, dir: 1.05, hemi: 0.85 },
+    { t: 0.25, top: 0x3f7ff0, hor: 0xd6f0ff, sun: 0xffffff, dir: 1.20, hemi: 1.00 },
+    { t: 0.42, top: 0x4a6fc0, hor: 0xffc070, sun: 0xffd9a0, dir: 0.90, hemi: 0.75 },
+    { t: 0.50, top: 0x33408a, hor: 0xff8050, sun: 0xff9460, dir: 0.55, hemi: 0.58 },
+    { t: 0.58, top: 0x222a68, hor: 0x4a55a8, sun: 0xbdd2ff, dir: 0.40, hemi: 0.52 },
+    { t: 0.75, top: 0x1a2258, hor: 0x303c88, sun: 0xb9cdfd, dir: 0.36, hemi: 0.50 },
+    { t: 0.93, top: 0x222a68, hor: 0x3a4490, sun: 0xc9d6ff, dir: 0.40, hemi: 0.52 },
+    { t: 1.00, top: 0x3a4a8e, hor: 0xffa56b, sun: 0xffb36b, dir: 0.60, hemi: 0.60 },
+  ],
+  [ // 1 — КАНЬОН: пески, алые закаты, бирюзовая ночь
+    { t: 0.00, top: 0x6a4a9a, hor: 0xffb06a, sun: 0xffc080, dir: 0.65, hemi: 0.62 },
+    { t: 0.07, top: 0x6fa8e8, hor: 0xffe0b0, sun: 0xfff0d0, dir: 1.10, hemi: 0.90 },
+    { t: 0.25, top: 0x5f9fe8, hor: 0xffeec8, sun: 0xffffff, dir: 1.25, hemi: 1.00 },
+    { t: 0.42, top: 0x9a5ab0, hor: 0xff9a50, sun: 0xffc080, dir: 0.90, hemi: 0.72 },
+    { t: 0.50, top: 0x5a3a8e, hor: 0xff6a3a, sun: 0xff8a50, dir: 0.60, hemi: 0.58 },
+    { t: 0.58, top: 0x2a3a78, hor: 0x3a6a9a, sun: 0xbfe0ff, dir: 0.42, hemi: 0.52 },
+    { t: 0.75, top: 0x1c2a60, hor: 0x2a5a80, sun: 0xbfe0ff, dir: 0.38, hemi: 0.50 },
+    { t: 0.93, top: 0x2a3a78, hor: 0x3a5a90, sun: 0xbfe0ff, dir: 0.42, hemi: 0.52 },
+    { t: 1.00, top: 0x6a4a9a, hor: 0xffb06a, sun: 0xffc080, dir: 0.65, hemi: 0.62 },
+  ],
+  [ // 2 — НЕОН: розово-фиолетовые дни, глубокая фиолетовая ночь
+    { t: 0.00, top: 0x5a2a9a, hor: 0xff5ab0, sun: 0xff8ad0, dir: 0.60, hemi: 0.62 },
+    { t: 0.07, top: 0x6a3ad0, hor: 0xff9ae0, sun: 0xfff0ff, dir: 0.95, hemi: 0.85 },
+    { t: 0.25, top: 0x5a4ae8, hor: 0xc890ff, sun: 0xffffff, dir: 1.05, hemi: 0.95 },
+    { t: 0.42, top: 0x4a2aa8, hor: 0xff6ac8, sun: 0xffa0e0, dir: 0.85, hemi: 0.72 },
+    { t: 0.50, top: 0x3a1a88, hor: 0xff4a98, sun: 0xff7ab0, dir: 0.60, hemi: 0.60 },
+    { t: 0.58, top: 0x241858, hor: 0x5a3aa8, sun: 0xc0b0ff, dir: 0.45, hemi: 0.55 },
+    { t: 0.75, top: 0x1a1248, hor: 0x4a2a90, sun: 0xc0b0ff, dir: 0.42, hemi: 0.52 },
+    { t: 0.93, top: 0x241858, hor: 0x4a3aa0, sun: 0xc0b0ff, dir: 0.45, hemi: 0.55 },
+    { t: 1.00, top: 0x5a2a9a, hor: 0xff5ab0, sun: 0xff8ad0, dir: 0.60, hemi: 0.62 },
+  ],
+];
+const WORLD_SKY = [
+  { starMul: 1.0, moon: 52 },
+  { starMul: 0.9, moon: 58 },
+  { starMul: 1.8, moon: 42 },
 ];
 
 const WEATHERS = {
   clear: { fogMul: 1.0, dim: 1.0, rain: 0, snow: 0, gray: 0.0 },
-  rain:  { fogMul: 0.62, dim: 0.55, rain: 1, snow: 0, gray: 0.55 },
-  fog:   { fogMul: 0.34, dim: 0.80, rain: 0, snow: 0, gray: 0.75 },
-  snow:  { fogMul: 0.55, dim: 0.88, rain: 0, snow: 1, gray: 0.45 },
+  rain:  { fogMul: 0.62, dim: 0.68, rain: 1, snow: 0, gray: 0.48 },
+  fog:   { fogMul: 0.34, dim: 0.85, rain: 0, snow: 0, gray: 0.68 },
+  snow:  { fogMul: 0.55, dim: 0.92, rain: 0, snow: 1, gray: 0.4 },
 };
 
 export class Sky {
@@ -30,6 +60,9 @@ export class Sky {
     this.scene = scene;
     this.t = 0.10;                       // start mid-morning
     this.cycleLen = 110;                 // seconds per full day
+    this.worldA = 0;                     // бесшовный бленд палитр миров
+    this.worldB = 0;
+    this.wBlend = 1;
     this.weather = 'clear';
     this.cur = { ...WEATHERS.clear };
     this.target = { ...WEATHERS.clear };
@@ -162,7 +195,9 @@ export class Sky {
 
     this._cTop = new THREE.Color(); this._cHor = new THREE.Color();
     this._cSun = new THREE.Color(); this._gray = new THREE.Color(0x8a93a3);
-    this._fogC = new THREE.Color();
+    this._fogC = new THREE.Color(); this._tmpC = new THREE.Color();
+    this._sA = { top: new THREE.Color(), hor: new THREE.Color(), sun: new THREE.Color(), dir: 1, hemi: 1 };
+    this._sB = { top: new THREE.Color(), hor: new THREE.Color(), sun: new THREE.Color(), dir: 1, hemi: 1 };
   }
 
   _sprite(hex, scale) {
@@ -191,21 +226,43 @@ export class Sky {
     this.target = { ...WEATHERS[w] };
   }
 
-  update(dt, camera, inTunnel = 0) {
-    this.t = (this.t + dt / this.cycleLen) % 1;
-    const t = this.t;
+  // бесшовная смена мира: палитра неба перетекает за ~4 секунды
+  setWorld(i) {
+    if (i === this.worldB) return;
+    this.worldA = this.worldB;
+    this.worldB = i % WORLD_KEYS.length;
+    this.wBlend = 0;
+  }
 
-    // keyframe interpolation
+  _sample(KEYS, t, out) {
     let k0 = KEYS[0], k1 = KEYS[KEYS.length - 1];
     for (let i = 0; i < KEYS.length - 1; i++) {
       if (t >= KEYS[i].t && t <= KEYS[i + 1].t) { k0 = KEYS[i]; k1 = KEYS[i + 1]; break; }
     }
     const f = (t - k0.t) / Math.max(1e-5, k1.t - k0.t);
-    this._cTop.setHex(k0.top).lerp(new THREE.Color(k1.top), f);
-    this._cHor.setHex(k0.hor).lerp(new THREE.Color(k1.hor), f);
-    this._cSun.setHex(k0.sun).lerp(new THREE.Color(k1.sun), f);
-    let dirI = lerp(k0.dir, k1.dir, f);
-    let hemiI = lerp(k0.hemi, k1.hemi, f);
+    out.top.setHex(k0.top).lerp(this._tmpC.setHex(k1.top), f);
+    out.hor.setHex(k0.hor).lerp(this._tmpC.setHex(k1.hor), f);
+    out.sun.setHex(k0.sun).lerp(this._tmpC.setHex(k1.sun), f);
+    out.dir = lerp(k0.dir, k1.dir, f);
+    out.hemi = lerp(k0.hemi, k1.hemi, f);
+    return out;
+  }
+
+  update(dt, camera, inTunnel = 0) {
+    this.t = (this.t + dt / this.cycleLen) % 1;
+    const t = this.t;
+
+    // палитра = бленд keyframe-семплов двух миров
+    this.wBlend = Math.min(1, this.wBlend + dt / 4);
+    const sA = this._sample(WORLD_KEYS[this.worldA], t, this._sA);
+    const sB = this._sample(WORLD_KEYS[this.worldB], t, this._sB);
+    const wb = this.wBlend;
+    this._cTop.copy(sA.top).lerp(sB.top, wb);
+    this._cHor.copy(sA.hor).lerp(sB.hor, wb);
+    this._cSun.copy(sA.sun).lerp(sB.sun, wb);
+    let dirI = lerp(sA.dir, sB.dir, wb);
+    let hemiI = lerp(sA.hemi, sB.hemi, wb);
+    const skyW = WORLD_SKY[this.worldB];
 
     // weather transition
     this.wTimer -= dt;
@@ -263,7 +320,8 @@ export class Sky {
     this.moon.position.set(camera.position.x - sx * 0.9, Math.max(camera.position.y - sy * 0.9, -60), camera.position.z + sz * 0.8);
     this.sun.material.opacity = THREE.MathUtils.clamp((sy + 80) / 160, 0, 1) * (1 - W.gray * 0.85) * (1 - night);
     this.moon.material.opacity = night * 0.9 * (1 - W.gray * 0.7);
-    this.starMat.opacity = night * (1 - W.gray * 0.8) * 0.9;
+    this.moon.scale.setScalar(skyW.moon);
+    this.starMat.opacity = Math.min(1, night * (1 - W.gray * 0.8) * 0.9 * skyW.starMul);
 
     this.dome.position.copy(camera.position);
     this.stars.position.set(camera.position.x, camera.position.y - 30, camera.position.z);

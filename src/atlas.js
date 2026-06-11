@@ -48,7 +48,22 @@ export const REG = {
   icoShield:  { x: 736, y: 448, w: 96,  h: 96 },
   icoX2:      { x: 832, y: 448, w: 96,  h: 96 },
   icoBoot:    { x: 640, y: 544, w: 96,  h: 96 },
+  icoJet:     { x: 736, y: 544, w: 96,  h: 96 },
+  icoSlow:    { x: 832, y: 544, w: 96,  h: 96 },
+  icoBag:     { x: 640, y: 640, w: 96,  h: 96 },
+  icoStar:    { x: 736, y: 640, w: 96,  h: 96 },
+  wood:       { x: 0,   y: 576, w: 256, h: 64 },
+  neonBar:    { x: 0,   y: 648, w: 256, h: 64 },
 };
+
+// 4-ступенчатый градиент для toon-шейдинга (MeshToonMaterial.gradientMap)
+export function makeToonGradient() {
+  const data = new Uint8Array([110, 110, 110, 255, 170, 170, 170, 255, 222, 222, 222, 255, 255, 255, 255, 255]);
+  const t = new THREE.DataTexture(data, 4, 1, THREE.RGBAFormat);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.needsUpdate = true;
+  return t;
+}
 
 export function makeAtlas() {
   const [c, g] = canvas(1024, 1024);
@@ -69,36 +84,45 @@ export function makeAtlas() {
     g.restore();
   }
 
-  // train side: white body (instance-tintable), dark window band, doors, skirt
+  // train side: мультяшный вагон — белый корпус (тонируется), круглые окна, контуры
   {
     const r = REG.trainSide;
-    g.fillStyle = '#f4f4f6'; g.fillRect(r.x, r.y, r.w, r.h);
-    g.fillStyle = '#e2e2e6'; g.fillRect(r.x, r.y, r.w, 18);                  // roof line
-    g.fillStyle = '#33343c'; g.fillRect(r.x, r.y + r.h - 34, r.w, 34);      // skirt
-    g.fillStyle = '#caccd4'; g.fillRect(r.x, r.y + r.h - 40, r.w, 6);
-    // window band
-    g.fillStyle = '#10141f';
-    g.fillRect(r.x + 10, r.y + 52, r.w - 20, 64);
+    g.fillStyle = '#f6f6f8'; g.fillRect(r.x, r.y, r.w, r.h);
+    g.fillStyle = '#dcdce2'; g.fillRect(r.x, r.y, r.w, 20);                  // roof line
+    g.fillStyle = '#2b2c34';
+    g.beginPath(); g.roundRect(r.x - 6, r.y + r.h - 36, r.w + 12, 42, 10); g.fill(); // skirt
+    g.fillStyle = '#c2c4cc'; g.fillRect(r.x, r.y + r.h - 42, r.w, 7);
+    // окна — отдельные скруглённые иллюминаторы с толстой обводкой
     for (let i = 0; i < 6; i++) {
-      const wx = r.x + 22 + i * 82;
-      g.fillStyle = '#2c3c58';
-      g.fillRect(wx, r.y + 58, 62, 52);
-      g.fillStyle = 'rgba(255,255,255,0.18)';
-      g.fillRect(wx + 6, r.y + 58, 12, 52);
-      g.fillStyle = '#10141f';
+      const wx = r.x + 18 + i * 82;
+      g.fillStyle = '#23262f';
+      g.beginPath(); g.roundRect(wx - 5, r.y + 49, 72, 66, 18); g.fill();
+      const gr = g.createLinearGradient(wx, r.y + 54, wx + 62, r.y + 110);
+      gr.addColorStop(0, '#aef0ff'); gr.addColorStop(.6, '#5fb2e8'); gr.addColorStop(1, '#3f86c8');
+      g.fillStyle = gr;
+      g.beginPath(); g.roundRect(wx, r.y + 54, 62, 56, 14); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.55)';
+      g.beginPath(); g.roundRect(wx + 6, r.y + 59, 20, 22, 8); g.fill();
     }
-    // doors
+    // двери — скруглённые, с окошками
     for (const dx of [120, 330]) {
+      g.fillStyle = '#3a3d48';
+      g.beginPath(); g.roundRect(r.x + dx - 4, r.y + 42, 64, r.h - 76, 14); g.fill();
       g.fillStyle = '#9aa0ac';
-      g.fillRect(r.x + dx, r.y + 46, 56, r.h - 84);
-      g.fillStyle = '#2c3c58'; g.fillRect(r.x + dx + 6, r.y + 56, 18, 46);
-      g.fillRect(r.x + dx + 32, r.y + 56, 18, 46);
-      g.strokeStyle = '#5c606c'; g.lineWidth = 3;
-      g.strokeRect(r.x + dx, r.y + 46, 56, r.h - 84);
-      g.beginPath(); g.moveTo(r.x + dx + 28, r.y + 46); g.lineTo(r.x + dx + 28, r.y + r.h - 38); g.stroke();
+      g.beginPath(); g.roundRect(r.x + dx, r.y + 46, 56, r.h - 84, 11); g.fill();
+      g.fillStyle = '#5fb2e8';
+      g.beginPath(); g.roundRect(r.x + dx + 7, r.y + 56, 17, 42, 7); g.fill();
+      g.beginPath(); g.roundRect(r.x + dx + 32, r.y + 56, 17, 42, 7); g.fill();
+      g.strokeStyle = '#3a3d48'; g.lineWidth = 4;
+      g.beginPath(); g.moveTo(r.x + dx + 28, r.y + 48); g.lineTo(r.x + dx + 28, r.y + r.h - 40); g.stroke();
     }
-    // accent stripe under windows (mid gray → darker shade of tint)
-    g.fillStyle = '#9a9aa2'; g.fillRect(r.x, r.y + 126, r.w, 16);
+    // волнистая акцентная полоса (тонируется в цвет состава)
+    g.fillStyle = '#9a9aa2';
+    g.beginPath();
+    g.moveTo(r.x, r.y + 124);
+    for (let px = 0; px <= r.w; px += 16) g.lineTo(r.x + px, r.y + 124 + Math.sin(px * 0.05) * 3);
+    for (let px = r.w; px >= 0; px -= 16) g.lineTo(r.x + px, r.y + 142 + Math.sin(px * 0.05) * 3);
+    g.closePath(); g.fill();
   }
 
   // train front: windshield + lights
@@ -207,6 +231,74 @@ export function makeAtlas() {
     g.strokeStyle = '#ffffff'; g.lineWidth = 5; g.lineCap = 'round';
     g.beginPath(); g.moveTo(16, -20); g.lineTo(16, -6); g.moveTo(10, -13); g.lineTo(16, -6); g.lineTo(22, -13); g.stroke();
   });
+  ico(REG.icoJet, '#8a4fff', () => {               // джетпак-ракета
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.moveTo(0, -28); g.quadraticCurveTo(14, -10, 10, 10); g.lineTo(-10, 10);
+    g.quadraticCurveTo(-14, -10, 0, -28); g.fill();
+    g.fillStyle = '#cdb5ff'; g.beginPath(); g.arc(0, -6, 6, 0, 7); g.fill();
+    g.fillStyle = '#ffb13d';
+    g.beginPath(); g.moveTo(-8, 12); g.lineTo(0, 28); g.lineTo(8, 12); g.closePath(); g.fill();
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.moveTo(-10, 2); g.lineTo(-20, 14); g.lineTo(-10, 12); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(10, 2); g.lineTo(20, 14); g.lineTo(10, 12); g.closePath(); g.fill();
+  });
+  ico(REG.icoSlow, '#3aa8a0', () => {              // слоу-мо: песочные часы
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.moveTo(-16, -24); g.lineTo(16, -24); g.lineTo(3, 0); g.lineTo(16, 24); g.lineTo(-16, 24); g.lineTo(-3, 0);
+    g.closePath(); g.fill();
+    g.fillStyle = '#bff0ec';
+    g.beginPath(); g.moveTo(-9, -19); g.lineTo(9, -19); g.lineTo(0, -4); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(0, 8); g.lineTo(10, 21); g.lineTo(-10, 21); g.closePath(); g.fill();
+  });
+  ico(REG.icoBag, '#c98a1e', () => {               // мешок монет
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.ellipse(0, 8, 18, 16, 0, 0, 7); g.fill();
+    g.beginPath(); g.roundRect(-7, -22, 14, 12, 4); g.fill();
+    g.fillStyle = '#ffe9a8'; g.font = 'bold 24px sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('🪙'.length ? '$' : '$', 0, 8);
+  });
+  ico(REG.icoStar, '#e8c020', () => {              // звезда очков
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 11 : 26, a = -Math.PI / 2 + i * Math.PI / 5;
+      g[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+    }
+    g.closePath(); g.fill();
+  });
+
+  // деревянные доски (каньон)
+  {
+    const r = REG.wood;
+    g.fillStyle = '#9a6a3a'; g.fillRect(r.x, r.y, r.w, r.h);
+    for (let i = 0; i < 4; i++) {
+      const px = r.x + i * 64;
+      g.fillStyle = ['#a8743f', '#91633a', '#a06d3c', '#8d5f34'][i];
+      g.fillRect(px + 2, r.y + 2, 60, r.h - 4);
+      g.strokeStyle = 'rgba(60,35,12,.8)'; g.lineWidth = 3;
+      g.strokeRect(px + 2, r.y + 2, 60, r.h - 4);
+      g.fillStyle = 'rgba(60,35,12,.6)';
+      g.beginPath(); g.arc(px + 12, r.y + r.h / 2, 3, 0, 7); g.fill();
+      g.beginPath(); g.arc(px + 52, r.y + r.h / 2, 3, 0, 7); g.fill();
+      g.strokeStyle = 'rgba(60,35,12,.35)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(px + 8, r.y + 12 + i * 8); g.quadraticCurveTo(px + 30, r.y + 18 + i * 6, px + 56, r.y + 10 + i * 9); g.stroke();
+    }
+  }
+  // неоновые полосы (неон-мир)
+  {
+    const r = REG.neonBar;
+    g.fillStyle = '#14102a'; g.fillRect(r.x, r.y, r.w, r.h);
+    const cols = ['#35e0ff', '#ff4fd8', '#35e0ff', '#b14fff'];
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = cols[i];
+      g.beginPath(); g.roundRect(r.x + 8 + i * 62, r.y + 10, 48, r.h - 20, 10); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.75)';
+      g.beginPath(); g.roundRect(r.x + 16 + i * 62, r.y + 18, 32, r.h - 36, 6); g.fill();
+    }
+  }
 
   return tex(c);
 }
@@ -321,26 +413,33 @@ export function makeWindows(variant = 'glass') {
   }
   ge.fillStyle = '#000'; ge.fillRect(0, 0, 256, 256);
   const COLS = 4, ROWS = 4, cw = 256 / COLS, ch = 256 / ROWS;
-  const m = brick ? 16 : 10, mv = brick ? 18 : 12;
+  const m = brick ? 16 : 11, mv = brick ? 18 : 13;
+  const rad = brick ? 7 : 9;                // мультяшные скругления
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
       const wx = x * cw + m, wy = y * ch + mv, ww = cw - m * 2, wh = ch - mv * 2;
-      g.fillStyle = brick ? '#6e5b4c' : '#39414f';
-      g.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
+      // толстая тёмная обводка-рамка
+      g.fillStyle = brick ? '#5d4a3a' : '#2c3140';
+      g.beginPath(); g.roundRect(wx - 5, wy - 5, ww + 10, wh + 10, rad + 3); g.fill();
       const grad = g.createLinearGradient(wx, wy, wx + ww, wy + wh);
-      if (brick) { grad.addColorStop(0, '#2e3441'); grad.addColorStop(.5, '#4c5666'); grad.addColorStop(1, '#262b36'); }
-      else { grad.addColorStop(0, '#2b3950'); grad.addColorStop(.5, '#46607f'); grad.addColorStop(1, '#222d40'); }
-      g.fillStyle = grad; g.fillRect(wx, wy, ww, wh);
-      g.fillStyle = 'rgba(255,255,255,0.22)';
-      g.beginPath(); g.moveTo(wx + ww * .15, wy + wh); g.lineTo(wx + ww * .35, wy); g.lineTo(wx + ww * .5, wy); g.lineTo(wx + ww * .3, wy + wh); g.fill();
+      if (brick) { grad.addColorStop(0, '#7fd4e8'); grad.addColorStop(.55, '#4f9fc4'); grad.addColorStop(1, '#3a7ba0'); }
+      else { grad.addColorStop(0, '#9fe3ff'); grad.addColorStop(.55, '#5fb2e8'); grad.addColorStop(1, '#3f86c8'); }
+      g.fillStyle = grad;
+      g.beginPath(); g.roundRect(wx, wy, ww, wh, rad); g.fill();
+      // жирный мультяшный блик
+      g.fillStyle = 'rgba(255,255,255,0.5)';
+      g.beginPath(); g.roundRect(wx + 4, wy + 4, ww * 0.32, wh * 0.42, 6); g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.28)';
+      g.beginPath(); g.moveTo(wx + ww * .45, wy + wh); g.lineTo(wx + ww * .68, wy); g.lineTo(wx + ww * .82, wy); g.lineTo(wx + ww * .6, wy + wh); g.fill();
       if (brick) {                          // подоконник
-        g.fillStyle = 'rgba(255,255,255,.5)';
-        g.fillRect(wx - 5, wy + wh + 3, ww + 10, 4);
+        g.fillStyle = 'rgba(255,245,230,.85)';
+        g.beginPath(); g.roundRect(wx - 7, wy + wh + 4, ww + 14, 5, 3); g.fill();
       }
       // emissive: ~half of the windows lit warm at night
       if (Math.random() < 0.52) {
         const warm = ['#ffd98a', '#ffc46b', '#fff2c4', '#ffb55e'][(Math.random() * 4) | 0];
-        ge.fillStyle = warm; ge.fillRect(wx, wy, ww, wh);
+        ge.fillStyle = warm;
+        ge.beginPath(); ge.roundRect(wx, wy, ww, wh, rad); ge.fill();
         ge.fillStyle = 'rgba(0,0,0,0.35)';
         if (Math.random() < .4) ge.fillRect(wx, wy + wh / 2, ww, wh / 2);
       }

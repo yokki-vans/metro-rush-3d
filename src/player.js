@@ -1,81 +1,67 @@
-// Player: the CC0 "RobotExpressive" model (from the three.js examples,
-// by Tomás Laulhé / Don McCurdy) with Running / Jump / Death / Dance clips.
-// Roll is a procedural somersault. Physics runs in straight course-space.
+// Player: физика в «прямом» курсовом пространстве + сменные визуальные риги:
+// RobotRig (CC0-модель RobotExpressive с клипами) и процедурные персонажи
+// из characters.js (кот/ниндзя/капибара) с кодовой анимацией.
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/loaders/GLTFLoader.js';
 import { curved } from './curveworld.js';
 import { LANE_W } from './world.js';
+import { makeProcRig, PROC_IDS } from './characters.js';
 
 const GRAV = 30, JUMP_V = 10.8, FALL_FAST = -17;
 
-export class Player {
-  constructor(scene, shadowTex) {
-    this.scene = scene;
-    this.group = new THREE.Group();
-    scene.add(this.group);
-
-    const sm = new THREE.MeshBasicMaterial({
-      map: shadowTex, transparent: true, depthWrite: false,
-    });
-    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.9), curved(sm));
-    this.shadow.rotation.x = -Math.PI / 2;
-    this.shadow.renderOrder = 2;
-    scene.add(this.shadow);
-
-    this.ready = false;
-    this.reset();
-  }
-
-  async load() {
-    const gltf = await new GLTFLoader().loadAsync('assets/robot.glb');
-    const model = this.model = gltf.scene;
-    model.traverse(o => {
+// ----------------------------------------------------------- риг робота GLTF
+class RobotRig {
+  constructor(gltf) {
+    this.root = new THREE.Group();
+    const scene = this.scene = gltf.scene;
+    scene.traverse(o => {
       if (o.isMesh) {
         o.frustumCulled = false;
         if (o.material) curved(o.material);
       }
     });
-
-    // пузырь щита
-    this.bubble = new THREE.Mesh(
-      new THREE.SphereGeometry(0.95, 18, 12),
-      curved(new THREE.MeshBasicMaterial({
-        color: 0x6fc4ff, transparent: true, opacity: 0.22,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-      }))
-    );
-    this.bubble.position.y = 0.88;
-    this.bubble.visible = false;
-    this.bubble.renderOrder = 6;
-    this.group.add(this.bubble);
-    this.bubbleT = 0;
-    const box = new THREE.Box3().setFromObject(model);
-    const h = box.max.y - box.min.y;
-    const s = 1.62 / h;
-    model.scale.setScalar(s);
-    model.rotation.y = Math.PI;            // face -z (forward)
-    this.group.add(model);
-
-    this.mixer = new THREE.AnimationMixer(model);
+    const box = new THREE.Box3().setFromObject(scene);
+    scene.scale.setScalar(1.62 / (box.max.y - box.min.y));
+    scene.rotation.y = Math.PI;            // лицом вперёд (-z)
+    this.root.add(scene);
+    this.mixer = new THREE.AnimationMixer(scene);
     this.actions = {};
-    for (const clip of gltf.animations) {
-      this.actions[clip.name] = this.mixer.clipAction(clip);
+    for (const clip of gltf.animations) this.actions[clip.name] = this.mixer.clipAction(clip);
+    for (const n of ['Jump', 'Death']) {
+      if (this.actions[n]) { this.actions[n].setLoop(THREE.LoopOnce); this.actions[n].clampWhenFinished = true; }
     }
-    const jump = this.actions.Jump;
-    if (jump) { jump.setLoop(THREE.LoopOnce); jump.clampWhenFinished = true; }
-    const death = this.actions.Death;
-    if (death) { death.setLoop(THREE.LoopOnce); death.clampWhenFinished = true; }
-    this.ready = true;
-    if (this.pendingSkin) this.applySkin(this.pendingSkin);
-    this.play('Idle', 0);
+    this.current = null;
   }
 
-  // перекраска материалов робота под выбранный скин
+  _play(name, fade = 0.16) {
+    const next = this.actions[name];
+    if (!next) return;
+    if (this.current === name) {
+      // once-клипы (Jump) перезапускаются, иначе буферный прыжок замораживал позу
+      if (next.loop === THREE.LoopOnce) { next.reset(); next.play(); }
+      return;
+    }
+    next.reset();
+    if (name === 'Jump') next.timeScale = 1.35;
+    next.fadeIn(fade).play();
+    if (this.current && this.actions[this.current]) this.actions[this.current].fadeOut(fade);
+    this.current = name;
+  }
+
+  setState(name) {
+    const map = { idle: 'Idle', dance: 'Dance', run: 'Running', jump: 'Jump', death: 'Death' };
+    this._play(map[name] || 'Idle', name === 'jump' ? 0.08 : name === 'death' ? 0.1 : 0.16);
+  }
+
+  reset() {
+    // остановить ВСЕ клипы: clampWhenFinished-поза Death не должна пережить рестарт
+    this.mixer.stopAllAction();
+    this.current = null;
+  }
+
   applySkin(def) {
-    if (!this.model) { this.pendingSkin = def; return; }
-    this.pendingSkin = def;
-    this.model.traverse(o => {
-      if (!o.isMesh || !o.material || o === this.bubble) return;
+    this.scene.traverse(o => {
+      if (!o.isMesh || !o.material) return;
       const m = o.material;
       if (!m.userData.base) {
         m.userData.base = {
@@ -110,29 +96,101 @@ export class Player {
     });
   }
 
+  update(dt, ctx) {
+    this.mixer.update(dt * (ctx.dead ? 0.9 : 1));
+    if (this.current === 'Running' && this.actions.Running) {
+      this.actions.Running.timeScale = 0.55 + ctx.speed / 16;
+    }
+  }
+}
+
+// ==================================================================== Player
+export class Player {
+  constructor(scene, shadowTex, toonGrad) {
+    this.scene = scene;
+    this.toonGrad = toonGrad;
+    this.group = new THREE.Group();
+    scene.add(this.group);
+
+    const sm = new THREE.MeshBasicMaterial({
+      map: shadowTex, transparent: true, depthWrite: false,
+    });
+    this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.9), curved(sm));
+    this.shadow.rotation.x = -Math.PI / 2;
+    this.shadow.renderOrder = 2;
+    scene.add(this.shadow);
+
+    // пузырь щита
+    this.bubble = new THREE.Mesh(
+      new THREE.SphereGeometry(0.95, 18, 12),
+      curved(new THREE.MeshBasicMaterial({
+        color: 0x6fc4ff, transparent: true, opacity: 0.22,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }))
+    );
+    this.bubble.position.y = 0.88;
+    this.bubble.visible = false;
+    this.bubble.renderOrder = 6;
+    this.group.add(this.bubble);
+    this.bubbleT = 0;
+
+    this.rig = null;
+    this.charId = null;
+    this.lastState = 'idle';
+    this.ready = false;
+    this.procCache = {};
+    this.reset();
+  }
+
+  get model() { return this.rig ? this.rig.root : null; }
+
+  async load() {
+    const gltf = await new GLTFLoader().loadAsync('assets/robot.glb');
+    this.robotRig = new RobotRig(gltf);
+    this.ready = true;
+    this.setCharacter(this.pendingChar || 'robot');
+    if (this.pendingSkin) this.robotRig.applySkin(this.pendingSkin);
+    this._state('idle');
+  }
+
+  // смена персонажа: робот или процедурный (cat/ninja/capy)
+  setCharacter(id) {
+    if (!this.ready) { this.pendingChar = id; return; }
+    if (id === this.charId && this.rig) return;
+    if (this.rig) this.group.remove(this.rig.root);
+    if (id === 'robot' || !PROC_IDS.includes(id)) {
+      this.rig = this.robotRig;
+      id = 'robot';
+      if (this.pendingSkin) this.robotRig.applySkin(this.pendingSkin);
+    } else {
+      this.rig = this.procCache[id] || (this.procCache[id] = makeProcRig(id, this.toonGrad));
+    }
+    this.charId = id;
+    this.rig.reset();
+    this.rig.root.rotation.set(0, 0, 0);
+    this.rig.root.position.set(0, 0, 0);
+    this.rig.root.visible = true;
+    this.group.add(this.rig.root);
+    this.rig.setState(this.lastState);
+  }
+
+  applySkin(def) {
+    this.pendingSkin = def;
+    if (this.robotRig) this.robotRig.applySkin(def);
+  }
+
+  _state(name) {
+    this.lastState = name;
+    if (this.rig) this.rig.setState(name);
+  }
+
   setShield(on) { if (this.bubble) this.bubble.visible = on; }
 
   saveHop() {                          // спасительный прыжок при срабатывании щита
     this.vy = Math.max(this.vy, 12.5);
     this.grounded = false;
     this.rolling = 0;
-    this.play('Jump', 0.06);
-  }
-
-  play(name, fade = 0.18) {
-    if (!this.ready) return;
-    const next = this.actions[name];
-    if (!next) return;
-    if (this.current === name) {
-      // once-клипы (Jump) можно перезапустить, иначе буферный прыжок замораживал позу
-      if (next.loop === THREE.LoopOnce) { next.reset(); next.play(); }
-      return;
-    }
-    next.reset();
-    if (name === 'Jump') next.timeScale = 1.35;
-    next.fadeIn(fade).play();
-    if (this.current && this.actions[this.current]) this.actions[this.current].fadeOut(fade);
-    this.current = name;
+    this._state('jump');
   }
 
   reset() {
@@ -146,23 +204,18 @@ export class Player {
     this.jumpBuf = 0;          // «нажал прыжок чуть раньше приземления»
     this.rollBuf = 0;          // свайп вниз в воздухе → кувырок при касании
     this.boostJump = false;
+    this.flying = false;       // джетпак
     if (this.bubble) this.bubble.visible = false;
     this.dead = false;
     this.leanT = 0;
     this.stepT = 0;
-    this.current = null;
-    // остановить ВСЕ клипы: иначе clampWhenFinished-поза Death (отлетевшая
-    // голова) переживала рестарт и смешивалась с бегом
-    if (this.mixer) this.mixer.stopAllAction();
-    if (this.model) {
-      this.model.rotation.x = 0;
-      this.model.rotation.z = 0;
-      this.model.position.y = 0;
-      this.model.position.z = 0;
+    if (this.rig) {
+      this.rig.reset();
+      this.rig.root.rotation.set(0, 0, 0);
+      this.rig.root.position.set(0, 0, 0);
+      this.rig.root.visible = true;
     }
   }
-
-  get worldX() { return this.x; }
 
   steer(dir) {                       // dir: -1 left, +1 right
     if (this.dead) return false;
@@ -174,7 +227,7 @@ export class Player {
   }
 
   jump() {
-    if (this.dead) return false;
+    if (this.dead || this.flying) return false;
     if (!this.grounded) {
       this.jumpBuf = 0.16;            // буфер: исполним сразу после приземления
       return false;
@@ -183,13 +236,14 @@ export class Player {
     this.grounded = false;
     this.rolling = 0;
     this.rollSpin = 0;
-    if (this.model) { this.model.rotation.x = 0; this.model.position.y = 0; this.model.position.z = 0; }
-    this.play('Jump', 0.08);
+    const R = this.model;
+    if (R) { R.rotation.x = 0; R.position.y = 0; R.position.z = 0; }
+    this._state('jump');
     return true;
   }
 
   fastFall() {                        // swipe down in the air
-    if (this.dead || this.grounded) return false;
+    if (this.dead || this.grounded || this.flying) return false;
     this.vy = FALL_FAST;
     this.rollBuf = 0.22;              // как в раннерах: вниз в воздухе = кувырок при касании
     return true;
@@ -204,23 +258,25 @@ export class Player {
 
   die() {
     this.dead = true;
-    // сбросить кувырок/наклон, чтобы Death-анимация не смешивалась с вывернутой позой
+    // сбросить кувырок/наклон, чтобы анимация смерти не смешивалась с вывернутой позой
     this.rolling = 0;
     this.leanT = 0;
-    if (this.model) {
-      this.model.rotation.x = 0;
-      this.model.rotation.z = 0;
-      this.model.position.y = 0;
-      this.model.position.z = 0;
+    this.flying = false;
+    const R = this.model;
+    if (R) {
+      R.rotation.x = 0;
+      R.rotation.z = 0;
+      R.position.y = 0;
+      R.position.z = 0;
     }
-    this.play('Death', 0.1);
+    this._state('death');
   }
 
-  idleDance() { this.play('Dance', 0.3); }
-  startRun() { this.play('Running', 0.2); }
+  idleDance() { this._state('dance'); }
+  startRun() { this._state('run'); }
 
   update(dt, world, dist, speed, cb) {
-    if (this.ready) this.mixer.update(dt * (this.dead ? 0.9 : 1));
+    if (this.rig) this.rig.update(dt, { speed, grounded: this.grounded, dead: this.dead, rolling: this.rolling > 0 });
     if (this.dead) {
       // погибший в прыжке падает на землю, а не зависает в воздухе
       if (!this.grounded) {
@@ -245,7 +301,12 @@ export class Player {
 
     // vertical
     const gh = world.groundHeight(this.x, dist);
-    if (this.grounded) {
+    if (this.flying) {
+      // джетпак: паришь над составами
+      this.y += (4.25 - this.y) * Math.min(1, dt * 5);
+      this.vy = 0;
+      this.grounded = false;
+    } else if (this.grounded) {
       if (this.y > gh + 0.05) {            // ran off a train roof
         this.grounded = false;
         this.vy = 0;
@@ -254,12 +315,11 @@ export class Player {
       }
       // резкая ступень (лоб поезда) не подхватывает игрока — это смерть, решает collide
     }
-    if (!this.grounded) {
+    if (!this.grounded && !this.flying) {
       this.vy -= GRAV * dt;
       const prevY = this.y;
       this.y += this.vy * dt;
-      // приземление засчитывается, только если в начале кадра игрок был НАД
-      // опорой (а не влетел в лоб поезда снизу/сбоку) — размер шага не важен
+      // приземление засчитывается, только если в начале кадра игрок был НАД опорой
       if (this.y <= gh && this.vy <= 0 && prevY >= gh - 0.05) {
         this.y = gh;
         this.grounded = true;
@@ -269,10 +329,10 @@ export class Player {
           this.rollBuf = 0;
           this.vy = JUMP_V * (this.boostJump ? 1.34 : 1);
           this.grounded = false;
-          this.play('Jump', 0.08);
+          this._state('jump');
           cb.onJump && cb.onJump();
         } else {
-          this.play('Running', 0.12);
+          this._state('run');
           if (this.rollBuf > 0) {          // кувырок сразу после приземления
             this.rollBuf = 0;
             if (this.roll()) cb.onRoll && cb.onRoll();
@@ -281,38 +341,23 @@ export class Player {
       }
     }
 
-    // roll: somersault around the BODY CENTRE, not the feet origin —
-    // p = (I − R)·c keeps the centre fixed so nothing dips below the floor
+    const R = this.model;
+    // roll: somersault around the BODY CENTRE — ничего не уходит под пол
     if (this.rolling > 0) {
       this.rolling -= dt;
       this.rollSpin += dt / 0.62 * Math.PI * 2;
       const prog = Math.min(this.rollSpin / (Math.PI * 2), 1);
       const a = -prog * Math.PI * 2;
-      const c = 0.78;                       // высота центра тела
-      if (this.model) {
-        this.model.rotation.x = a;
-        this.model.position.y = c - c * Math.cos(a);
-        this.model.position.z = -c * Math.sin(a);
+      const c = 0.78;
+      if (R) {
+        R.rotation.x = a;
+        R.position.y = c - c * Math.cos(a);
+        R.position.z = -c * Math.sin(a);
       }
-      if (this.rolling <= 0 && this.model) {
-        this.model.rotation.x = 0;
-        this.model.position.y = 0;
-        this.model.position.z = 0;
-      }
-    }
-
-    // run cycle speed & lean
-    if (this.ready && this.current === 'Running') {
-      this.actions.Running.timeScale = 0.55 + speed / 16;
-    }
-    this.leanT *= Math.exp(-6 * dt);
-    if (this.model) {
-      this.model.rotation.z = -this.leanT * 1.4;
-      if (this.rolling <= 0) {           // не затирать подъём корпуса во время кувырка
-        this.model.position.y = this.grounded ? Math.abs(Math.sin(dist * 1.9)) * 0.03 : 0;
-      }
-      if (this.rolling <= 0 && this.model.rotation.x !== 0 && this.current !== 'Death') {
-        this.model.rotation.x *= Math.exp(-10 * dt);
+      if (this.rolling <= 0 && R) {
+        R.rotation.x = 0;
+        R.position.y = 0;
+        R.position.z = 0;
       }
     }
 
@@ -321,6 +366,19 @@ export class Player {
       this.bubbleT += dt;
       this.bubble.material.opacity = 0.2 + Math.sin(this.bubbleT * 5) * 0.07;
       this.bubble.scale.setScalar(1 + Math.sin(this.bubbleT * 3.3) * 0.04);
+    }
+
+    // наклон при смене полосы
+    this.leanT *= Math.exp(-6 * dt);
+    if (R) {
+      R.rotation.z = -this.leanT * 1.4;
+      if (this.rolling <= 0) {
+        R.position.y = this.grounded ? Math.abs(Math.sin(dist * 1.9)) * 0.03 : 0;
+        if (this.flying) R.position.y = Math.sin(performance.now() / 280) * 0.1;  // парение
+      }
+      if (this.rolling <= 0 && R.rotation.x !== 0 && !this.dead) {
+        R.rotation.x *= Math.exp(-10 * dt);
+      }
     }
 
     // footstep dust
@@ -339,6 +397,4 @@ export class Player {
     this.shadow.scale.setScalar(air);
     this.shadow.material.opacity = air;
   }
-
-  colliderTop() { return this.y + (this.rolling > 0 ? 0.7 : 1.5); }
 }

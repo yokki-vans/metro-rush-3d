@@ -150,7 +150,16 @@
     width: 38px; height: 38px; border-radius: 10px; line-height: 36px;
     background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
   }
-  #shopGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 8px; }
+  #shopGrid, #charGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 8px; }
+  #charGrid { grid-template-columns: repeat(2, 1fr); }
+  .shopSec { margin-top: 16px; font-size: 13px; letter-spacing: .12em; opacity: .75; }
+  .tabs { display: flex; gap: 8px; margin: 10px 0 6px; }
+  .tab {
+    cursor: pointer; padding: 7px 16px; border-radius: 999px; font-size: 13px;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2);
+  }
+  .tab.on { background: rgba(43,217,106,.22); border-color: rgba(43,217,106,.6); }
+  .bhead { font-size: 12px; opacity: .7; margin: 8px 0 4px; text-align: left; }
   .skin {
     cursor: pointer; padding: 10px 6px 9px; border-radius: 16px; text-align: center;
     background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.18);
@@ -211,6 +220,8 @@
         <div class="bchip hidden" id="bc-magnet">🧲<i></i></div>
         <div class="bchip hidden" id="bc-x2">×2<i></i></div>
         <div class="bchip hidden" id="bc-boot">👟<i></i></div>
+        <div class="bchip hidden" id="bc-jet">🚀<i></i></div>
+        <div class="bchip hidden" id="bc-slow">⏳<i></i></div>
         <div class="bchip hidden" id="bc-shield">🛡</div>
       </div>
     </div>
@@ -246,6 +257,8 @@
     <div class="pclose" id="shopClose">✕</div>
     <h3>ПЕРСОНАЖИ</h3>
     <div class="shopBank">🪙 Копилка: <span id="bankVal2">0</span></div>
+    <div id="charGrid"></div>
+    <div class="shopSec">СКИНЫ РОБО</div>
     <div id="shopGrid"></div>
   </div>
 </div>
@@ -254,9 +267,12 @@
   <div class="panel">
     <div class="pclose" id="boardClose">✕</div>
     <h3>ТАБЛИЦА ЛИДЕРОВ</h3>
-    <div style="font-size:12px; opacity:.65;">лучшие забеги на этом устройстве</div>
+    <div class="tabs">
+      <span class="tab on" id="tabWorld">🌍 МИР</span>
+      <span class="tab" id="tabLocal">📱 МОИ</span>
+    </div>
     <div id="boardList"></div>
-    <div class="nameRow">Имя: <b id="boardName"></b> <span class="mbtn" id="btnRename" style="padding:6px 12px;">✏️</span></div>
+    <div class="nameRow">Ник: <b id="boardName"></b> <span class="mbtn" id="btnRename" style="padding:6px 12px;">✏️</span></div>
   </div>
 </div>
 

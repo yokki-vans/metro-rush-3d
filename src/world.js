@@ -12,6 +12,32 @@ export const TRAIN_TOP = 2.6;
 const AHEAD = 360, BEHIND = 50;
 const CAR_LEN = 17;
 
+// Три мира-сеттинга: каждые 50к очков окружение меняется полностью (бесшовно —
+// новые чанки приходят уже в новой теме, старые докатываются и уходят)
+export const THEMES = [
+  {
+    id: 'city', name: 'ГОРОД',
+    trainColors: [0xd64545, 0x3f7fd0, 0x3da25c, 0xe08c2d, 0xc9b438, 0x7b5cd6],
+    base: 0x54555a, ballast: 0x6e6357, platform: 0xb2b7be, strip: 0xe8c93e,
+    rail: 0xc7ccd6, sleeper: 0x4d4136, fence: 0x7c828c, pole: 0x4d525c,
+    lampGlow: 0xffe2a8, skyline: 0x55607a, tunnelWall: 0x5b5e66,
+  },
+  {
+    id: 'canyon', name: 'КАНЬОН',
+    trainColors: [0x9a5a30, 0xb5763a, 0x8a6248, 0xa84830, 0x96703a, 0xc28a40],
+    base: 0xc28a52, ballast: 0xb5713f, platform: 0xcf9e64, strip: 0xa84830,
+    rail: 0xd9c2a0, sleeper: 0x6e4a2a, fence: 0x9a6a3a, pole: 0x7c5230,
+    lampGlow: 0xffd9a0, skyline: 0xa05a36, tunnelWall: 0x8a5a36,
+  },
+  {
+    id: 'neon', name: 'НЕОН',
+    trainColors: [0x35e0ff, 0xff4fd8, 0xb14fff, 0x4fff9d, 0xffe44f, 0x4f6aff],
+    base: 0x241c44, ballast: 0x2c2255, platform: 0x3a2e70, strip: 0x35e0ff,
+    rail: 0x9fd8ff, sleeper: 0x1c1535, fence: 0x4a3a8a, pole: 0x3a2e70,
+    lampGlow: 0x6fe0ff, skyline: 0x2a1f55, tunnelWall: 0x2c2255,
+  },
+];
+
 const mulberry = (a) => () => {
   a |= 0; a = (a + 0x6D2B79F5) | 0;
   let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -26,10 +52,10 @@ class Builder {
     this.atlas = []; this.win = []; this.winB = []; this.glow = [];
     this.ground = []; this.halo = []; this.haloT = [];
   }
-  box(list, w, h, d, x, y, z, color, region = REG.plain, ry = 0, rx = 0) {
+  box(list, w, h, d, x, y, z, color, region = REG.plain, ry = 0, rx = 0, rz = 0) {
     const g = new THREE.BoxGeometry(w, h, d);
     if (region !== 'win') regionUV(g, region);
-    this._fin(list, g, x, y, z, color, ry, rx);
+    this._fin(list, g, x, y, z, color, ry, rx, rz);
     return g;
   }
   // тайловая «земля» (гравий/бетон/трава): UV по мировому размеру
@@ -114,17 +140,22 @@ export class World {
     this.root = new THREE.Group();
     scene.add(this.root);
 
-    // shared materials
-    this.matAtlas = curved(new THREE.MeshLambertMaterial({ map: tex.atlas, vertexColors: true }));
-    this.matWin = curved(new THREE.MeshLambertMaterial({
-      map: tex.windows, vertexColors: true,
+    // shared materials — toon-шейдинг (мультяшные ступени света)
+    const G = tex.toonGrad;
+    this.matAtlas = curved(new THREE.MeshToonMaterial({ map: tex.atlas, gradientMap: G, vertexColors: true }));
+    this.matWin = curved(new THREE.MeshToonMaterial({
+      map: tex.windows, gradientMap: G, vertexColors: true,
       emissive: 0xffffff, emissiveMap: tex.windowsE, emissiveIntensity: 0,
     }));
-    this.matWinB = curved(new THREE.MeshLambertMaterial({          // кирпичные фасады
-      map: tex.windowsB, vertexColors: true,
+    this.matWinB = curved(new THREE.MeshToonMaterial({             // кирпичные фасады
+      map: tex.windowsB, gradientMap: G, vertexColors: true,
       emissive: 0xffffff, emissiveMap: tex.windowsBE, emissiveIntensity: 0,
     }));
-    this.matGround = curved(new THREE.MeshLambertMaterial({ map: tex.ground, vertexColors: true }));
+    this.matGround = curved(new THREE.MeshToonMaterial({ map: tex.ground, gradientMap: G, vertexColors: true }));
+    this.matNeon = curved(new THREE.MeshToonMaterial({             // светящиеся неон-препятствия
+      map: tex.atlas, gradientMap: G, vertexColors: true,
+      emissive: 0xffffff, emissiveMap: tex.atlas, emissiveIntensity: 0.75,
+    }));
     this.matGlow = curved(new THREE.MeshBasicMaterial({ vertexColors: true }));
     this.matHalo = curved(new THREE.MeshBasicMaterial({            // гало фонарей (ночью)
       map: tex.glow, vertexColors: true, transparent: true, opacity: 0,
@@ -134,14 +165,23 @@ export class World {
       map: tex.glow, vertexColors: true, transparent: true, opacity: 0.5,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     }));
-    this.matCoin = curved(new THREE.MeshLambertMaterial({
-      map: tex.coin, vertexColors: true, emissive: 0xffb030, emissiveMap: tex.coin, emissiveIntensity: 0.3,
+    this.matCoin = curved(new THREE.MeshToonMaterial({
+      map: tex.coin, gradientMap: G, vertexColors: true,
+      emissive: 0xffb030, emissiveMap: tex.coin, emissiveIntensity: 0.3,
     }));
 
-    // pools
+    // pools (барьеры/рамки — отдельный пул на каждый мир: дерево/неон/город)
     this.trains = instPool(makeTrainGeo(), this.matAtlas, 24);
-    this.barriers = instPool(makeBarrierGeo(), this.matAtlas, 24);
-    this.gantries = instPool(makeGantryGeo(), this.matAtlas, 14);
+    this.barrierPools = [
+      instPool(makeBarrierGeo(0), this.matAtlas, 24),
+      instPool(makeBarrierGeo(1), this.matAtlas, 24),
+      instPool(makeBarrierGeo(2), this.matNeon, 24),
+    ];
+    this.gantryPools = [
+      instPool(makeGantryGeo(0), this.matAtlas, 14),
+      instPool(makeGantryGeo(1), this.matAtlas, 14),
+      instPool(makeGantryGeo(2), this.matNeon, 14),
+    ];
     this.ramps = instPool(makeRampGeo(), this.matAtlas, 8);
     // монета: диск с тиснёным аверсом + золотой обод
     const coinFace = new THREE.CylinderGeometry(0.38, 0.38, 0.07, 18);
@@ -165,7 +205,8 @@ export class World {
     };
     mc.customProgramCacheKey = () => 'coinspin';
     this.coins = instPool(coinGeo, this.matCoin, 130);
-    for (const p of [this.trains, this.barriers, this.gantries, this.ramps, this.coins]) this.root.add(p.mesh);
+    this._allPools = [this.trains, ...this.barrierPools, ...this.gantryPools, this.ramps, this.coins];
+    for (const p of this._allPools) this.root.add(p.mesh);
 
     // ореол монет: инстансный квад с тем же буфером матриц (одна загрузка в GPU);
     // спин-патч на него не ставится, так что квад не крутится рёбрами к камере
@@ -182,15 +223,19 @@ export class World {
       this.root.add(this.coinHalo);
     }
 
-    // бустеры-пикапы: 4 типа × 2 экземпляра (иконка-«крест» + спрайт-гало)
+    // бустеры-пикапы: 8 типов × 2 экземпляра (иконка-«крест» + спрайт-гало)
     this.pickupDefs = {
       magnet: { reg: REG.icoMagnet, color: 0xff5e72 },
       shield: { reg: REG.icoShield, color: 0x57a8ff },
       x2:     { reg: REG.icoX2,     color: 0xffc23d },
       boot:   { reg: REG.icoBoot,   color: 0x4fe08a },
+      jet:    { reg: REG.icoJet,    color: 0xb68aff },
+      slow:   { reg: REG.icoSlow,   color: 0x5fe0d8 },
+      bag:    { reg: REG.icoBag,    color: 0xffd34d },
+      star:   { reg: REG.icoStar,   color: 0xfff06a },
     };
-    this.matPickup = curved(new THREE.MeshLambertMaterial({
-      map: tex.atlas, vertexColors: true, side: THREE.DoubleSide,
+    this.matPickup = curved(new THREE.MeshToonMaterial({
+      map: tex.atlas, gradientMap: G, vertexColors: true, side: THREE.DoubleSide,
       emissive: 0xffffff, emissiveMap: tex.atlas, emissiveIntensity: 0.35,
     }));
     this.pickupPool = [];
@@ -217,8 +262,9 @@ export class World {
     this.pickups = [];
     this.timeS = 0;
 
-    // train liveries via instance colors
-    this.trainColors = [0xd64545, 0x3f7fd0, 0x3da25c, 0xe08c2d, 0xc9b438, 0x7b5cd6].map(h => new THREE.Color(h));
+    // train liveries via instance colors — палитра своя у каждого мира
+    this.trainPalettes = THEMES.map(t => t.trainColors.map(h => new THREE.Color(h)));
+    this.trainColors = this.trainPalettes[0];
     const white = new THREE.Color(0xffffff);
     for (let i = 0; i < this.trains.mesh.count; i++) this.trains.mesh.setColorAt(i, white);
     this.trains.mesh.instanceColor.needsUpdate = true;
@@ -231,23 +277,29 @@ export class World {
       this.root.add(s); this.headlights.push(s);
     }
 
-    // skyline silhouettes
+    // skyline silhouettes (цвет — от темы мира)
     {
       const g = new THREE.BoxGeometry(10, 1, 12);
       g.translate(0, 0.5, 0);
-      tint(g, 0x55607a);
-      this.skyline = new THREE.InstancedMesh(g, curved(new THREE.MeshLambertMaterial({ vertexColors: true })), 56);
+      this.skylineMat = curved(new THREE.MeshToonMaterial({ color: 0x55607a, gradientMap: G }));
+      this.skyline = new THREE.InstancedMesh(g, this.skylineMat, 56);
       this.skyline.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.skyline.frustumCulled = false;
       this.root.add(this.skyline);
     }
 
-    // chunk variant library
-    this.variants = {};
+    // chunk variant library: [тема][биом][вариант]
+    this.themeIdx = 0;
+    this.glowFloor = 0;
+    this.variants = [];
     const biomes = ['downtown', 'oldtown', 'park', 'industrial', 'tunnel'];
-    for (const b of biomes) {
-      this.variants[b] = [];
-      for (let v = 0; v < 3; v++) this.variants[b].push(buildVariant(b, v, this));
+    for (let ti = 0; ti < THEMES.length; ti++) {
+      const perBiome = {};
+      for (const b of biomes) {
+        perBiome[b] = [];
+        for (let v = 0; v < 2; v++) perBiome[b].push(buildVariant(b, v, ti));
+      }
+      this.variants.push(perBiome);
     }
     // biome sequence per chunk index
     const seq = [];
@@ -263,6 +315,15 @@ export class World {
   }
 
   biomeAt(ci) { return this.biomeSeq[ci % this.biomeSeq.length]; }
+
+  // бесшовная смена мира: новые чанки и препятствия — уже в новой теме
+  setWorld(i) {
+    const ti = ((i % THEMES.length) + THEMES.length) % THEMES.length;
+    if (ti === this.themeIdx) return;
+    this.themeIdx = ti;
+    this.trainColors = this.trainPalettes[ti];
+    this.skylineMat.color.setHex(THEMES[ti].skyline);
+  }
 
   reset() {
     for (const c of this.activeChunks) { this.root.remove(c.group); c.variant.pool.push(c.group); }
@@ -282,7 +343,7 @@ export class World {
   }
 
   _hideAll() {
-    for (const p of [this.trains, this.barriers, this.gantries, this.ramps, this.coins]) {
+    for (const p of this._allPools) {
       for (let i = 0; i < p.mesh.count; i++) p.mesh.setMatrixAt(i, p.zero);
       p.mesh.instanceMatrix.needsUpdate = true;
       p.free.length = 0;
@@ -292,7 +353,7 @@ export class World {
   }
 
   _release(o) {
-    const pool = { train: this.trains, mtrain: this.trains, barrier: this.barriers, gantry: this.gantries }[o.kind];
+    const pool = o.poolRef || { train: this.trains, mtrain: this.trains }[o.kind];
     if (o.inst != null) { pool.mesh.setMatrixAt(o.inst, pool.zero); pool.free.push(o.inst); }
     if (o.inst2 != null) { pool.mesh.setMatrixAt(o.inst2, pool.zero); pool.free.push(o.inst2); }
     if (o.rampInst != null) { this.ramps.mesh.setMatrixAt(o.rampInst, this.ramps.zero); this.ramps.free.push(o.rampInst); }
@@ -390,13 +451,15 @@ export class World {
   _take(pool) { return pool.free.length ? pool.free.pop() : null; }
 
   _addBarrier(laneI, s) {
-    const inst = this._take(this.barriers); if (inst == null) return;
-    this.obstacles.push({ kind: 'barrier', lane: laneI, s0: s - 0.25, s1: s + 0.25, top: 0.92, inst });
+    const pool = this.barrierPools[this.themeIdx];
+    const inst = this._take(pool); if (inst == null) return;
+    this.obstacles.push({ kind: 'barrier', lane: laneI, s0: s - 0.25, s1: s + 0.25, top: 0.92, inst, poolRef: pool });
   }
 
   _addGantry(laneI, s) {
-    const inst = this._take(this.gantries); if (inst == null) return;
-    this.obstacles.push({ kind: 'gantry', lane: laneI, s0: s - 0.2, s1: s + 0.2, gapY: 1.12, inst });
+    const pool = this.gantryPools[this.themeIdx];
+    const inst = this._take(pool); if (inst == null) return;
+    this.obstacles.push({ kind: 'gantry', lane: laneI, s0: s - 0.2, s1: s + 0.2, gapY: 1.12, inst, poolRef: pool });
   }
 
   _paint(inst, color) {
@@ -494,11 +557,12 @@ export class World {
 
     this._spawnLayout(dist, speed);
 
-    // night-driven looks
+    // night-driven looks (в неон-мире окна светятся и днём)
     this.timeS += dt;
-    this.matWin.emissiveIntensity = env.night * 1.25 + env.flash * 0.2;
+    this.glowFloor += ((this.themeIdx === 2 ? 0.6 : 0) - this.glowFloor) * Math.min(1, dt / 2.5);
+    this.matWin.emissiveIntensity = Math.max(env.night * 1.25, this.glowFloor) + env.flash * 0.2;
     this.matWinB.emissiveIntensity = this.matWin.emissiveIntensity;
-    this.matHalo.opacity = env.night * 0.55;
+    this.matHalo.opacity = Math.max(env.night * 0.55, this.glowFloor * 0.5);
     // пульс монет + усиление свечения ночью
     const pulse = 0.5 + 0.5 * Math.sin(this.timeS * 3.4);
     this.matCoin.emissiveIntensity = 0.3 + pulse * 0.22 + env.night * 0.5;
@@ -539,12 +603,9 @@ export class World {
 
       // write matrices
       const x = (o.lane - 1) * LANE_W;
-      if (o.kind === 'barrier') {
+      if (o.kind === 'barrier' || o.kind === 'gantry') {
         M.makeTranslation(x, 0, dist - (o.s0 + o.s1) / 2);
-        this.barriers.mesh.setMatrixAt(o.inst, M);
-      } else if (o.kind === 'gantry') {
-        M.makeTranslation(x, 0, dist - (o.s0 + o.s1) / 2);
-        this.gantries.mesh.setMatrixAt(o.inst, M);
+        o.poolRef.mesh.setMatrixAt(o.inst, M);
       } else {
         // trains: car geometry is CAR_LEN long, origin at its near end, extends -z
         M.makeTranslation(x, 0, dist - o.s0);
@@ -561,8 +622,8 @@ export class World {
       }
     }
     this.trains.mesh.instanceMatrix.needsUpdate = true;
-    this.barriers.mesh.instanceMatrix.needsUpdate = true;
-    this.gantries.mesh.instanceMatrix.needsUpdate = true;
+    for (const p of this.barrierPools) p.mesh.instanceMatrix.needsUpdate = true;
+    for (const p of this.gantryPools) p.mesh.instanceMatrix.needsUpdate = true;
     this.ramps.mesh.instanceMatrix.needsUpdate = true;
 
     // coins
@@ -606,7 +667,7 @@ export class World {
 
   _placeChunk(ci) {
     const biome = this.biomeAt(ci);
-    const variants = this.variants[biome];
+    const variants = this.variants[this.themeIdx][biome];
     const v = variants[ci % variants.length];
     let group = v.pool.pop();
     if (!group) {
@@ -720,38 +781,93 @@ function makeTrainGeo() {
   return g;
 }
 
-function makeBarrierGeo() {
+function makeBarrierGeo(ti = 0) {
   const parts = [];
-  const bar = new THREE.BoxGeometry(1.9, 0.42, 0.22);
-  regionUV(bar, REG.hazard); bar.translate(0, 0.7, 0); tint(bar, 0xffffff);
-  parts.push(bar);
-  const bar2 = new THREE.BoxGeometry(1.9, 0.16, 0.18);
-  regionUV(bar2, REG.hazard); bar2.translate(0, 0.32, 0); tint(bar2, 0xd9d9de);
-  parts.push(bar2);
-  for (const sx of [-0.85, 0.85]) {
-    const leg = new THREE.BoxGeometry(0.12, 0.92, 0.16);
-    regionUV(leg, REG.plain); leg.translate(sx, 0.46, 0); tint(leg, 0x6c7077);
-    parts.push(leg);
+  if (ti === 1) {
+    // деревянный забор-преграда (каньон)
+    for (const [y, rz] of [[0.66, 0.035], [0.3, -0.03]]) {
+      const p = new THREE.BoxGeometry(1.95, 0.26, 0.14);
+      regionUV(p, REG.wood); p.rotateZ(rz); p.translate(0, y, 0); tint(p, 0xffffff);
+      parts.push(p);
+    }
+    for (const sx of [-0.8, 0.8]) {
+      const leg = new THREE.BoxGeometry(0.16, 0.95, 0.16);
+      regionUV(leg, REG.wood); leg.rotateZ(sx * 0.04); leg.translate(sx, 0.46, 0); tint(leg, 0xd9b288);
+      parts.push(leg);
+    }
+  } else if (ti === 2) {
+    // неоновый световой барьер
+    const bar = new THREE.BoxGeometry(1.9, 0.34, 0.2);
+    regionUV(bar, REG.neonBar); bar.translate(0, 0.7, 0); tint(bar, 0xffffff);
+    parts.push(bar);
+    const bar2 = new THREE.BoxGeometry(1.9, 0.12, 0.14);
+    regionUV(bar2, REG.neonBar); bar2.translate(0, 0.3, 0); tint(bar2, 0x9adfff);
+    parts.push(bar2);
+    for (const sx of [-0.85, 0.85]) {
+      const leg = new THREE.BoxGeometry(0.12, 0.92, 0.14);
+      regionUV(leg, REG.plain); leg.translate(sx, 0.46, 0); tint(leg, 0x241c44);
+      parts.push(leg);
+    }
+  } else {
+    const bar = new THREE.BoxGeometry(1.9, 0.42, 0.22);
+    regionUV(bar, REG.hazard); bar.translate(0, 0.7, 0); tint(bar, 0xffffff);
+    parts.push(bar);
+    const bar2 = new THREE.BoxGeometry(1.9, 0.16, 0.18);
+    regionUV(bar2, REG.hazard); bar2.translate(0, 0.32, 0); tint(bar2, 0xd9d9de);
+    parts.push(bar2);
+    for (const sx of [-0.85, 0.85]) {
+      const leg = new THREE.BoxGeometry(0.12, 0.92, 0.16);
+      regionUV(leg, REG.plain); leg.translate(sx, 0.46, 0); tint(leg, 0x6c7077);
+      parts.push(leg);
+    }
   }
   const g = mergeGeometries(parts, false);
   parts.forEach(p => p.dispose());
   return g;
 }
 
-function makeGantryGeo() {
+function makeGantryGeo(ti = 0) {
   const parts = [];
-  for (const sx of [-1.02, 1.02]) {
-    const post = new THREE.BoxGeometry(0.14, 2.5, 0.14);
-    regionUV(post, REG.plain); post.translate(sx, 1.25, 0); tint(post, 0x8a8f99);
-    parts.push(post);
+  if (ti === 1) {
+    // деревянные воротца с висячей вывеской (каньон)
+    for (const sx of [-1.02, 1.02]) {
+      const post = new THREE.BoxGeometry(0.2, 2.5, 0.2);
+      regionUV(post, REG.wood); post.rotateZ(sx * 0.03); post.translate(sx, 1.25, 0); tint(post, 0xffffff);
+      parts.push(post);
+    }
+    const beam = new THREE.BoxGeometry(2.5, 0.22, 0.2);
+    regionUV(beam, REG.wood); beam.rotateZ(0.02); beam.translate(0, 2.45, 0); tint(beam, 0xffffff);
+    parts.push(beam);
+    const sign = new THREE.BoxGeometry(1.7, 0.8, 0.1);
+    regionUV(sign, REG.wood); sign.rotateZ(-0.05); sign.translate(0, 1.85, 0); tint(sign, 0xe8c89a);
+    parts.push(sign);
+  } else if (ti === 2) {
+    // неоновый портал-кольцо
+    const ring = new THREE.TorusGeometry(1.05, 0.09, 8, 22);
+    regionUV(ring, REG.plain); ring.translate(0, 2.0, 0); tint(ring, 0x66f0ff);
+    parts.push(ring);
+    const ring2 = new THREE.TorusGeometry(0.85, 0.05, 8, 20);
+    regionUV(ring2, REG.plain); ring2.translate(0, 1.95, 0); tint(ring2, 0xff7ae0);
+    parts.push(ring2);
+    for (const sx of [-1.02, 1.02]) {
+      const post = new THREE.BoxGeometry(0.12, 2.1, 0.12);
+      regionUV(post, REG.plain); post.translate(sx, 1.05, 0); tint(post, 0x241c44);
+      parts.push(post);
+    }
+  } else {
+    for (const sx of [-1.02, 1.02]) {
+      const post = new THREE.BoxGeometry(0.14, 2.5, 0.14);
+      regionUV(post, REG.plain); post.translate(sx, 1.25, 0); tint(post, 0x8a8f99);
+      parts.push(post);
+    }
+    const beam = new THREE.BoxGeometry(2.2, 0.14, 0.14);
+    regionUV(beam, REG.plain); beam.translate(0, 2.42, 0); tint(beam, 0x8a8f99);
+    parts.push(beam);
+    const sign = new THREE.BoxGeometry(2.0, 1.0, 0.1);
+    boxUV(sign, { pz: REG.sign, nz: REG.sign, rest: REG.plain });
+    sign.translate(0, 1.78, 0); tint(sign, 0xffffff);
+    parts.push(sign);
   }
-  const beam = new THREE.BoxGeometry(2.2, 0.14, 0.14);
-  regionUV(beam, REG.plain); beam.translate(0, 2.42, 0); tint(beam, 0x8a8f99);
-  parts.push(beam);
-  const sign = new THREE.BoxGeometry(2.0, 1.0, 0.1);
-  boxUV(sign, { pz: REG.sign, nz: REG.sign, rest: REG.plain });
-  sign.translate(0, 1.78, 0); tint(sign, 0xffffff);
-  parts.push(sign);
   const g = mergeGeometries(parts, false);
   parts.forEach(p => p.dispose());
   return g;
@@ -771,68 +887,88 @@ function makeRampGeo() {
 }
 
 // =============================================================== chunk build
-function buildVariant(biome, vi, world) {
-  const rnd = mulberry(biome.length * 1000 + vi * 7919 + 13);
+function buildVariant(biome, vi, ti) {
+  const T = THEMES[ti];
+  const rnd = mulberry(biome.length * 1000 + vi * 7919 + ti * 131 + 13);
+  const jr = () => (rnd() - 0.5) * 0.09;   // мультяшный наклон пропсов
   const B = new Builder();
   const L = CHUNK_LEN;
   const Z = (s) => -s; // local: course offset s∈[0,L] → z
 
-  // --- common ground & tracks
+  // --- common ground & tracks (цвета — из темы мира)
   const isTunnel = biome === 'tunnel';
   // широкая ТЕКСТУРНАЯ земля до самых дальних домов
-  B.gbox(140, 0.5, L, 0, -0.27, -L / 2, isTunnel ? 0x3a3c40 : 0x54555a, 0.16);  // base
-  B.gbox(8.8, 0.34, L, 0, -0.15, -L / 2, 0x6e6357, 0.8);                        // ballast gravel
+  B.gbox(140, 0.5, L, 0, -0.27, -L / 2, isTunnel ? 0x3a3c40 : T.base, 0.16);    // base
+  B.gbox(8.8, 0.34, L, 0, -0.15, -L / 2, T.ballast, 0.8);                       // ballast gravel
   for (const tx of [-LANE_W, 0, LANE_W]) {
     for (const rx of [-0.72, 0.72]) {
-      B.box(B.atlas, 0.09, 0.14, L, tx + rx, 0.1, -L / 2, 0xc7ccd6);
+      B.box(B.atlas, 0.09, 0.14, L, tx + rx, 0.1, -L / 2, T.rail);
     }
     const n = Math.floor(L / 0.85);
     for (let i = 0; i < n; i++) {
-      B.box(B.atlas, 1.9, 0.07, 0.24, tx, 0.005, Z(i * 0.85 + 0.4), 0x4d4136);
+      B.box(B.atlas, 1.9, 0.07, 0.24, tx, 0.005, Z(i * 0.85 + 0.4), T.sleeper);
     }
   }
   // platforms
   for (const side of [-1, 1]) {
-    B.gbox(4.6, 0.62, L, side * 6.7, 0.31, -L / 2, isTunnel ? 0x7a7e86 : 0xb2b7be, 0.55);
-    B.box(B.atlas, 0.3, 0.08, L, side * 4.55, 0.66, -L / 2, 0xe8c93e);          // warning strip
+    B.gbox(4.6, 0.62, L, side * 6.7, 0.31, -L / 2, isTunnel ? 0x7a7e86 : T.platform, 0.55);
+    B.box(B.atlas, 0.3, 0.08, L, side * 4.55, 0.66, -L / 2, T.strip);           // warning strip
   }
 
   if (isTunnel) {
-    // walls + ceiling + lamps
+    // walls + ceiling + lamps (город: бетон / каньон: шахта с деревянной крепью / неон: труба)
+    const lampC = ti === 2 ? 0x9ff0ff : 0xffe9b0;
     for (const side of [-1, 1]) {
-      B.box(B.atlas, 0.8, 7.4, L, side * 9.3, 3.4, -L / 2, 0x5b5e66, REG.concrete);
+      B.box(B.atlas, 0.8, 7.4, L, side * 9.3, 3.4, -L / 2, T.tunnelWall, REG.concrete);
       for (let s = 4; s < L; s += 8) {
-        B.box(B.atlas, 1.1, 7.6, 0.5, side * 9.1, 3.5, Z(s), 0x4c4f57);
-        B.box(B.glow, 0.1, 0.5, 2.4, side * 8.85, 4.4, Z(s + 4), 0xffe9b0);     // wall lamps
-        B.haloQuad(B.haloT, 1.7, side * 8.7, 4.4, Z(s + 4), 0xffe9b0);
+        if (ti === 1) {        // деревянная крепь
+          B.box(B.atlas, 0.5, 7.4, 0.6, side * 9.0, 3.5, Z(s), 0xffffff, REG.wood, 0, 0, jr());
+        } else if (ti === 2) { // неоновое ребро
+          B.box(B.glow, 0.18, 7.2, 0.18, side * 9.0, 3.5, Z(s), [0x35e0ff, 0xff4fd8][(s / 8 | 0) % 2]);
+        } else {
+          B.box(B.atlas, 1.1, 7.6, 0.5, side * 9.1, 3.5, Z(s), 0x4c4f57);
+        }
+        B.box(B.glow, 0.1, 0.5, 2.4, side * 8.85, 4.4, Z(s + 4), lampC);        // wall lamps
+        B.haloQuad(B.haloT, 1.7, side * 8.7, 4.4, Z(s + 4), lampC);
       }
-      B.box(B.atlas, 1.4, 2.2, 2.0, side * 8.5, 1.4, Z(L * (0.3 + side * 0.2) + 8), 0x8b8f98, REG.concrete); // service niche
+      B.box(B.atlas, 1.4, 2.2, 2.0, side * 8.5, 1.4, Z(L * (0.3 + side * 0.2) + 8), ti === 1 ? 0x7c5a38 : 0x8b8f98, REG.concrete); // service niche
     }
-    B.box(B.atlas, 19.4, 0.7, L, 0, 7.0, -L / 2, 0x46494f, REG.concrete);
+    B.box(B.atlas, 19.4, 0.7, L, 0, 7.0, -L / 2, ti === 1 ? 0x6e4a2a : 0x46494f, ti === 1 ? REG.wood : REG.concrete);
     for (let s = 2; s < L; s += 8) {
-      B.box(B.atlas, 19.4, 0.5, 0.7, 0, 6.7, Z(s), 0x3c3f45);
-      B.box(B.glow, 1.6, 0.08, 0.5, 0, 6.55, Z(s + 4), 0xfff3c8);               // ceiling lights
-      B.haloQuad(B.haloT, 2.2, 0, 6.4, Z(s + 4), 0xfff3c8);
+      if (ti === 1) B.box(B.atlas, 19.4, 0.5, 0.8, 0, 6.7, Z(s), 0xffffff, REG.wood);
+      else B.box(B.atlas, 19.4, 0.5, 0.7, 0, 6.7, Z(s), ti === 2 ? 0x2a2055 : 0x3c3f45);
+      B.box(B.glow, 1.6, 0.08, 0.5, 0, 6.55, Z(s + 4), lampC);                  // ceiling lights
+      B.haloQuad(B.haloT, 2.2, 0, 6.4, Z(s + 4), lampC);
     }
   } else {
-    // catenary poles & wires
+    // catenary poles & wires (каньон — деревянные столбы, неон — светящиеся пилоны)
+    const woodReg = ti === 1 ? REG.wood : REG.plain;
     for (let s = 6; s < L; s += 13.3) {
-      for (const side of [-1, 1]) B.box(B.atlas, 0.18, 5.8, 0.18, side * 4.1, 2.9, Z(s), 0x4d525c);
-      B.box(B.atlas, 8.4, 0.14, 0.14, 0, 5.7, Z(s), 0x4d525c);
+      for (const side of [-1, 1]) {
+        B.box(B.atlas, ti === 1 ? 0.26 : 0.18, 5.8, ti === 1 ? 0.26 : 0.18,
+          side * 4.1, 2.9, Z(s), ti === 1 ? 0xffffff : T.pole, woodReg, 0, 0, jr());
+        if (ti === 2) B.box(B.glow, 0.1, 0.5, 0.1, side * 4.1, 5.95, Z(s), 0x35e0ff);
+      }
+      B.box(B.atlas, 8.4, 0.14, 0.14, 0, 5.7, Z(s), ti === 1 ? 0xffffff : T.pole, woodReg);
     }
     for (const tx of [-LANE_W, 0, LANE_W]) B.box(B.atlas, 0.035, 0.06, L, tx, 5.15, -L / 2, 0x2c2e33);
     // street lamps (heads glow at night thanks to Basic material)
     for (let s = 9; s < L; s += 12.5) {
       const side = (Math.floor(s / 12.5) % 2) ? 1 : -1;
-      B.box(B.atlas, 0.14, 4.6, 0.14, side * 8.6, 2.3, Z(s), 0x3f444d);
-      B.box(B.atlas, 1.1, 0.1, 0.1, side * 8.1, 4.55, Z(s), 0x3f444d);
-      B.box(B.glow, 0.5, 0.14, 0.3, side * 7.7, 4.48, Z(s), 0xfff0c0);
-      B.haloQuad(B.halo, 2.0, side * 7.7, 4.45, Z(s), 0xffdf9e);   // ночное гало
+      B.box(B.atlas, 0.14, 4.6, 0.14, side * 8.6, 2.3, Z(s), T.pole, woodReg, 0, 0, jr());
+      B.box(B.atlas, 1.1, 0.1, 0.1, side * 8.1, 4.55, Z(s), T.pole, woodReg);
+      B.box(B.glow, 0.5, 0.14, 0.3, side * 7.7, 4.48, Z(s), T.lampGlow);
+      B.haloQuad(B.halo, 2.0, side * 7.7, 4.45, Z(s), T.lampGlow);   // ночное гало
     }
     // fences along platform edges
     for (let s = 0; s < L; s += 4) {
       for (const side of [-1, 1]) {
-        if (rnd() < 0.85) B.box(B.atlas, 0.07, 1.0, 3.6, side * 4.75, 1.1, Z(s + 2), 0x7c828c);
+        if (rnd() < 0.85) {
+          if (ti === 1) B.box(B.atlas, 0.09, 0.8, 3.6, side * 4.75, 1.05, Z(s + 2), 0xffffff, REG.wood, 0, 0, jr());
+          else if (ti === 2) B.box(B.glow, 0.05, 0.08, 3.6, side * 4.75, 1.35, Z(s + 2), (s / 4 | 0) % 2 ? 0x35e0ff : 0xff4fd8);
+          else B.box(B.atlas, 0.07, 1.0, 3.6, side * 4.75, 1.1, Z(s + 2), T.fence, REG.plain, 0, 0, jr());
+          if (ti === 2) B.box(B.atlas, 0.07, 1.0, 0.1, side * 4.75, 0.95, Z(s + 2), 0x3a2e70);
+        }
       }
     }
   }
@@ -849,93 +985,246 @@ function buildVariant(biome, vi, world) {
   };
 
   if (biome === 'downtown') {
-    const palette = [0x9fb6c8, 0x8898ad, 0xa9b2c4, 0x7e93a8, 0xb6c2cf];
-    for (const side of [-1, 1]) {
-      let s = rnd() * 4;
-      while (s < L - 6) {
-        const w = 9 + rnd() * 7, d = 8 + rnd() * 6, h = 17 + rnd() * 22;
-        const x = side * (12.5 + rnd() * 4 + d / 2);
-        B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0]);
-        B.box(B.atlas, d + 0.4, 0.5, w + 0.4, x, h + 0.25, Z(s + w / 2), 0x5d646e);
-        if (rnd() < 0.5) B.box(B.atlas, 2.2, 1.4, 2.8, x, h + 1.2, Z(s + w / 2), 0x767d88);
-        s += w + 1.5 + rnd() * 5;
+    if (ti === 1) {
+      // КАНЬОН: слоистые месы из песчаника
+      const rock = [0xc2703f, 0xb0623a, 0xd08050, 0x9a5230];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 5;
+        while (s < L - 8) {
+          const w = 12 + rnd() * 10, x = side * (14 + rnd() * 8);
+          let hh = 0;
+          const tiers = 2 + (rnd() * 3 | 0);
+          for (let k = 0; k < tiers; k++) {
+            const tw = w * (1 - k * 0.22), th = 4 + rnd() * 5;
+            B.box(B.atlas, tw * 0.7, th, tw, x, hh + th / 2, Z(s + w / 2), rock[(rnd() * rock.length) | 0], REG.plain, 0, 0, jr() * 0.4);
+            hh += th;
+          }
+          B.box(B.atlas, w * 0.36, 1.2, w * 0.5, x, hh + 0.5, Z(s + w / 2), 0xd9925a);
+          s += w + 4 + rnd() * 7;
+        }
       }
-      if (rnd() < 0.9) addAd(side, 6 + rnd() * (L - 12));
+    } else if (ti === 2) {
+      // НЕОН: тёмные башни со светящимся остеклением и неоновыми кромками
+      const palette = [0x3a3a78, 0x2e2e66, 0x44308a, 0x28406e];
+      const edges = [0x35e0ff, 0xff4fd8, 0xb14fff, 0x4fff9d];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 4;
+        while (s < L - 6) {
+          const w = 9 + rnd() * 7, d = 8 + rnd() * 6, h = 18 + rnd() * 24;
+          const x = side * (12.5 + rnd() * 4 + d / 2);
+          B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0]);
+          const ec = edges[(rnd() * edges.length) | 0];
+          B.box(B.glow, d + 0.5, 0.16, 0.16, x, h + 0.1, Z(s), ec);
+          B.box(B.glow, d + 0.5, 0.16, 0.16, x, h + 0.1, Z(s + w), ec);
+          B.box(B.glow, 0.16, 0.16, w, x - side * d / 2, h + 0.1, Z(s + w / 2), ec);
+          if (rnd() < 0.6) B.cyl(B.atlas, 0.06, 0.06, 3 + rnd() * 3, 6, x, h + 1.8, Z(s + w / 2), 0x6a6a9a, jr());
+          if (rnd() < 0.5) B.box(B.glow, 0.3, 0.3, 0.3, x, h + 3.6, Z(s + w / 2), ec);
+          s += w + 1.5 + rnd() * 5;
+        }
+        addAd(side, 6 + rnd() * (L - 12));
+      }
+    } else {
+      const palette = [0x9fb6c8, 0x8898ad, 0xa9b2c4, 0x7e93a8, 0xb6c2cf];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 4;
+        while (s < L - 6) {
+          const w = 9 + rnd() * 7, d = 8 + rnd() * 6, h = 17 + rnd() * 22;
+          const x = side * (12.5 + rnd() * 4 + d / 2);
+          B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0]);
+          B.box(B.atlas, d + 0.4, 0.5, w + 0.4, x, h + 0.25, Z(s + w / 2), 0x5d646e);
+          if (rnd() < 0.5) B.box(B.atlas, 2.2, 1.4, 2.8, x, h + 1.2, Z(s + w / 2), 0x767d88, REG.plain, 0, 0, jr());
+          s += w + 1.5 + rnd() * 5;
+        }
+        if (rnd() < 0.9) addAd(side, 6 + rnd() * (L - 12));
+      }
     }
   } else if (biome === 'oldtown') {
-    const palette = [0xc28e63, 0xb5764f, 0xc99e72, 0xa86a48, 0xbd8a59];
-    for (const side of [-1, 1]) {
-      let s = rnd() * 3;
-      while (s < L - 5) {
-        const w = 10 + rnd() * 6, d = 7 + rnd() * 4, h = 8 + rnd() * 9;
-        const x = side * (11.5 + rnd() * 3 + d / 2);
-        B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0], true);
-        B.box(B.atlas, d + 0.5, 0.6, w + 0.5, x, h + 0.3, 0 + Z(s + w / 2), 0x6e574a);
-        if (rnd() < 0.5) {                                   // постер на цоколе
-          const pr = new THREE.BoxGeometry(0.1, 1.5, 2.6);
+    if (ti === 1) {
+      // КАНЬОН: городок из досок — салуны с фальш-фасадами и бочками
+      for (const side of [-1, 1]) {
+        let s = rnd() * 4;
+        while (s < L - 6) {
+          const w = 8 + rnd() * 5, d = 6 + rnd() * 3, h = 4.5 + rnd() * 3;
+          const x = side * (11 + rnd() * 3 + d / 2);
+          B.box(B.atlas, d, h, w, x, h / 2, Z(s + w / 2), 0xffffff, REG.wood, 0, 0, jr() * 0.5);
+          B.box(B.atlas, d * 0.2, h + 1.6, w + 0.4, x - side * d * 0.42, (h + 1.6) / 2, Z(s + w / 2), 0xffffff, REG.wood); // фальш-фасад
+          B.box(B.atlas, 0.6, 1.6, 1.0, x - side * (d / 2 + 0.05), 0.9, Z(s + w / 2), 0x4a3424);  // дверь
+          B.box(B.atlas, d + 1.2, 0.18, w * 0.6, x - side * 0.8, h + 0.4, Z(s + w / 2), 0x8a5e34, REG.plain, 0, 0.16 * side); // навес
+          if (rnd() < 0.7) B.cyl(B.atlas, 0.42, 0.5, 0.9, 9, x - side * (d / 2 + 1.2), 0.45, Z(s + 1 + rnd() * (w - 2)), 0x8a5e34, jr()); // бочка
+          s += w + 2.5 + rnd() * 5;
+        }
+      }
+    } else if (ti === 2) {
+      // НЕОН: аркадная улица — низкие тёмные блоки и гигантские вывески
+      const palette = [0x2a2a5e, 0x322a6a, 0x232350];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 3;
+        while (s < L - 5) {
+          const w = 9 + rnd() * 6, d = 6 + rnd() * 4, h = 6 + rnd() * 5;
+          const x = side * (11.5 + rnd() * 3 + d / 2);
+          B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0]);
+          const ec = [0x35e0ff, 0xff4fd8, 0xffe44f][(rnd() * 3) | 0];
+          B.box(B.glow, d + 0.4, 0.14, 0.14, x, h + 0.1, Z(s + w / 2 - w / 2), ec);
+          const pr = new THREE.BoxGeometry(0.16, 2.6, 4.4);
           boxUV(pr, { px: adRegs[(rnd() * 4) | 0], nx: adRegs[(rnd() * 4) | 0], rest: REG.plain });
-          pr.translate(x - side * (d / 2 + 0.06), 1.7, Z(s + w / 2 + (rnd() - 0.5) * 3));
+          pr.translate(x - side * (d / 2 + 0.1), h * 0.55, Z(s + w / 2));
           tint(pr, 0xffffff);
           B.atlas.push(pr);
+          B.box(B.glow, 0.1, 2.8, 4.6, x - side * (d / 2 + 0.02), h * 0.55, Z(s + w / 2), ec);
+          s += w + 1.5 + rnd() * 4;
         }
-        if (rnd() < 0.55) {                                  // rooftop water tower
-          B.cyl(B.atlas, 0.9, 0.9, 1.6, 10, x, h + 1.4, Z(s + w / 2), 0x7a5240);
-          B.cone(B.atlas, 1.0, 0.7, 10, x, h + 2.55, Z(s + w / 2), 0x5d4034);
-        }
-        s += w + 1 + rnd() * 4;
       }
-      if (rnd() < 0.7) addAd(side, 8 + rnd() * (L - 16), 3.0);
+    } else {
+      const palette = [0xc28e63, 0xb5764f, 0xc99e72, 0xa86a48, 0xbd8a59];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 3;
+        while (s < L - 5) {
+          const w = 10 + rnd() * 6, d = 7 + rnd() * 4, h = 8 + rnd() * 9;
+          const x = side * (11.5 + rnd() * 3 + d / 2);
+          B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0], true);
+          B.box(B.atlas, d + 0.5, 0.6, w + 0.5, x, h + 0.3, 0 + Z(s + w / 2), 0x6e574a);
+          if (rnd() < 0.5) {                                   // постер на цоколе
+            const pr = new THREE.BoxGeometry(0.1, 1.5, 2.6);
+            boxUV(pr, { px: adRegs[(rnd() * 4) | 0], nx: adRegs[(rnd() * 4) | 0], rest: REG.plain });
+            pr.translate(x - side * (d / 2 + 0.06), 1.7, Z(s + w / 2 + (rnd() - 0.5) * 3));
+            tint(pr, 0xffffff);
+            B.atlas.push(pr);
+          }
+          if (rnd() < 0.55) {                                  // rooftop water tower
+            B.cyl(B.atlas, 0.9, 0.9, 1.6, 10, x, h + 1.4, Z(s + w / 2), 0x7a5240, jr());
+            B.cone(B.atlas, 1.0, 0.7, 10, x, h + 2.55, Z(s + w / 2), 0x5d4034);
+          }
+          s += w + 1 + rnd() * 4;
+        }
+        if (rnd() < 0.7) addAd(side, 8 + rnd() * (L - 16), 3.0);
+      }
     }
   } else if (biome === 'park') {
+    const lawnC = ti === 1 ? 0xc2a050 : ti === 2 ? 0x223a6a : 0x5d8c44;
+    const hedgeC = ti === 1 ? 0x8a9a4a : ti === 2 ? 0x2a4a8a : 0x4e7a3d;
     for (const side of [-1, 1]) {
-      B.gbox(22, 0.06, L, side * 20, 0.0, -L / 2, 0x5d8c44, 0.5);               // газон
-      B.box(B.atlas, 1.6, 0.9, L, side * 5.9, 0.95, -L / 2, 0x4e7a3d);          // hedge
+      B.gbox(22, 0.06, L, side * 20, 0.0, -L / 2, lawnC, 0.5);                  // газон/песок/грид
+      B.box(B.atlas, 1.6, 0.9, L, side * 5.9, 0.95, -L / 2, hedgeC);            // hedge
       let s = 2 + rnd() * 3;
       while (s < L - 3) {
-        // деревья за платформой, стволом в землю (раньше парили на +0.6)
         const x = side * (10 + rnd() * 6.5);
-        const th = 1.6 + rnd() * 1.3;
-        const disc = new THREE.CircleGeometry(1.25 + rnd() * 0.5, 10);          // тень кроны
+        const disc = new THREE.CircleGeometry(1.25 + rnd() * 0.5, 10);          // тень
         regionUV(disc, REG.plain);
         disc.rotateX(-Math.PI / 2);
         disc.translate(x, 0.085, Z(s));
-        tint(disc, 0x3d5731);
+        tint(disc, ti === 1 ? 0x8a6a3a : ti === 2 ? 0x141c3a : 0x3d5731);
         B.atlas.push(disc);
-        B.cyl(B.atlas, 0.16, 0.22, th, 7, x, th / 2, Z(s), 0x6b4a32);
-        const greens = [0x3f7a36, 0x4c8a3f, 0x57953f, 0x35702f];
-        B.cone(B.atlas, 1.5 + rnd() * 0.9, 2.6 + rnd() * 1.6, 8, x, th + 1.2, Z(s), greens[(rnd() * 4) | 0]);
+        if (ti === 1) {
+          // кактус с руками + камни
+          const ch = 1.6 + rnd() * 1.4;
+          B.cyl(B.atlas, 0.28, 0.32, ch, 8, x, ch / 2, Z(s), 0x4c8a3f, jr());
+          B.cyl(B.atlas, 0.16, 0.16, 0.8, 7, x - 0.42, ch * 0.55, Z(s), 0x57953f, 0, 0.9);
+          B.cyl(B.atlas, 0.16, 0.16, 0.7, 7, x + 0.4, ch * 0.72, Z(s), 0x57953f, 0, -0.9);
+          if (rnd() < 0.6) B.box(B.atlas, 0.9 + rnd(), 0.6 + rnd() * 0.5, 0.9 + rnd(), x + (rnd() - 0.5) * 3, 0.3, Z(s + 1.5), 0xb0784a, REG.plain, rnd() * 3, 0, jr() * 2);
+        } else if (ti === 2) {
+          // светящиеся кристаллы
+          const cc = [0x35e0ff, 0xff4fd8, 0xb14fff, 0x4fff9d][(rnd() * 4) | 0];
+          const chh = 1.4 + rnd() * 1.8;
+          B.cone(B.glow, 0.34 + rnd() * 0.2, chh, 6, x, chh / 2, Z(s), cc);
+          B.cone(B.glow, 0.2, chh * 0.55, 6, x + 0.5, chh * 0.27, Z(s + 0.4), cc);
+          B.haloQuad(B.haloT, 1.6 + rnd(), x, chh * 0.5, Z(s), cc);
+        } else {
+          const th = 1.6 + rnd() * 1.3;
+          B.cyl(B.atlas, 0.16, 0.22, th, 7, x, th / 2, Z(s), 0x6b4a32, jr());
+          const greens = [0x3f7a36, 0x4c8a3f, 0x57953f, 0x35702f];
+          B.cone(B.atlas, 1.5 + rnd() * 0.9, 2.6 + rnd() * 1.6, 8, x, th + 1.2, Z(s), greens[(rnd() * 4) | 0]);
+        }
         s += 3.5 + rnd() * 4;
       }
-      // distant low houses
+      // distant low houses / дальние скалы / неон-павильоны
       let s2 = rnd() * 8;
       while (s2 < L - 8) {
         const w = 8 + rnd() * 6, h = 5 + rnd() * 4;
         const x = side * (19 + rnd() * 6);
-        B.building(7, h, w, x, h / 2, Z(s2 + w / 2), 0xd9c9a8);
-        B.cone(B.atlas, 5.4, 2.4, 4, x, h + 1.1, Z(s2 + w / 2), 0x8d5b44);
+        if (ti === 1) {
+          B.box(B.atlas, 7, h, w, x, h / 2, Z(s2 + w / 2), [0xb0623a, 0xc2703f][(rnd() * 2) | 0], REG.plain, 0, 0, jr());
+          B.box(B.atlas, 4.6, 1, w * 0.6, x, h + 0.4, Z(s2 + w / 2), 0xd9925a);
+        } else if (ti === 2) {
+          B.building(7, h, w, x, h / 2, Z(s2 + w / 2), 0x2e2e66);
+          B.box(B.glow, 7.4, 0.14, 0.14, x, h + 0.1, Z(s2 + w / 2), [0x35e0ff, 0xff4fd8][(rnd() * 2) | 0]);
+        } else {
+          B.building(7, h, w, x, h / 2, Z(s2 + w / 2), 0xd9c9a8);
+          B.cone(B.atlas, 5.4, 2.4, 4, x, h + 1.1, Z(s2 + w / 2), 0x8d5b44);
+        }
         s2 += w + 6 + rnd() * 8;
       }
     }
   } else if (biome === 'industrial') {
-    const cols = [0xc25450, 0x4f7fa8, 0x58a06a, 0xc2924e, 0x8a8f99];
-    for (const side of [-1, 1]) {
-      let s = rnd() * 5;
-      while (s < L - 8) {
-        const w = 14 + rnd() * 8, h = 7 + rnd() * 5, d = 10 + rnd() * 4;
-        const x = side * (13 + rnd() * 4 + d / 2);
-        B.building(d, h, w, x, h / 2, Z(s + w / 2), 0xb4b9bd);
-        B.box(B.atlas, d + 0.3, 1.3, w + 0.3, x, h + 0.6, Z(s + w / 2), 0x70757d);
-        if (rnd() < 0.6) B.cyl(B.atlas, 0.7, 0.9, 7 + rnd() * 4, 9, x + 3, h + 3, Z(s + w / 2 + 4), 0x9b5a4a);
-        s += w + 2 + rnd() * 6;
-      }
-      // container stacks near tracks
-      let s3 = 3 + rnd() * 6;
-      while (s3 < L - 7) {
-        const n = 1 + (rnd() * 3 | 0);
-        for (let k = 0; k < n; k++) {
-          B.box(B.atlas, 2.4, 2.5, 6, side * (7.6 + rnd() * 1.2), 1.25 + k * 2.5 + 0.62, Z(s3 + 3), cols[(rnd() * cols.length) | 0]);
+    if (ti === 1) {
+      // КАНЬОН: рудник — деревянные копры, эстакады и кучи руды
+      for (const side of [-1, 1]) {
+        let s = rnd() * 6;
+        while (s < L - 9) {
+          const x = side * (14 + rnd() * 5);
+          const h = 7 + rnd() * 4;
+          for (const [ox, oz] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) {
+            B.box(B.atlas, 0.5, h, 0.5, x + ox, h / 2, Z(s + 3 + oz), 0xffffff, REG.wood, 0, ox * 0.04, oz * 0.04);
+          }
+          B.box(B.atlas, 4.6, 2.2, 4.6, x, h + 1, Z(s + 3), 0xffffff, REG.wood, 0, 0, jr());
+          B.box(B.atlas, 5.2, 0.3, 5.2, x, h - 0.2, Z(s + 3), 0x6e4a2a);
+          B.cone(B.atlas, 1.8 + rnd(), 1.6 + rnd(), 7, x + (rnd() - 0.5) * 6, 0.8, Z(s + 8), 0x6a4a30); // куча руды
+          s += 13 + rnd() * 8;
         }
-        s3 += 8 + rnd() * 9;
+        // деревянная эстакада вдоль путей
+        let s3 = 3 + rnd() * 6;
+        while (s3 < L - 7) {
+          B.box(B.atlas, 0.4, 2.4, 0.4, side * 7.8, 1.2, Z(s3), 0xffffff, REG.wood, 0, 0, jr());
+          B.box(B.atlas, 2.4, 0.3, 8, side * 7.8, 2.5, Z(s3 + 3), 0xffffff, REG.wood);
+          s3 += 8 + rnd() * 7;
+        }
+      }
+    } else if (ti === 2) {
+      // НЕОН: космодок — светящиеся контейнеры, мачты с огнями
+      const cols = [0x35e0ff, 0xff4fd8, 0xb14fff, 0x4fff9d, 0xffe44f];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 5;
+        while (s < L - 8) {
+          const w = 14 + rnd() * 8, h = 7 + rnd() * 5, d = 10 + rnd() * 4;
+          const x = side * (13 + rnd() * 4 + d / 2);
+          B.building(d, h, w, x, h / 2, Z(s + w / 2), 0x2a2a5e);
+          B.box(B.glow, d + 0.4, 0.16, 0.16, x, h + 0.12, Z(s + w / 2), cols[(rnd() * cols.length) | 0]);
+          const mh = 4 + rnd() * 4;
+          B.cyl(B.atlas, 0.08, 0.12, mh, 6, x + 2, h + mh / 2, Z(s + w / 2 + 3), 0x55558a, jr());
+          B.box(B.glow, 0.32, 0.32, 0.32, x + 2, h + mh + 0.2, Z(s + w / 2 + 3), 0xff4f6a);
+          s += w + 2 + rnd() * 6;
+        }
+        let s3 = 3 + rnd() * 6;
+        while (s3 < L - 7) {
+          const n = 1 + (rnd() * 3 | 0);
+          for (let k = 0; k < n; k++) {
+            const cc = cols[(rnd() * cols.length) | 0];
+            B.box(B.atlas, 2.4, 2.5, 6, side * (7.6 + rnd() * 1.2), 1.25 + k * 2.5 + 0.62, Z(s3 + 3), 0x232350);
+            B.box(B.glow, 2.5, 0.12, 6.1, side * (7.6 + rnd() * 1.2), 2.5 + k * 2.5 + 0.62, Z(s3 + 3), cc);
+          }
+          s3 += 8 + rnd() * 9;
+        }
+      }
+    } else {
+      const cols = [0xc25450, 0x4f7fa8, 0x58a06a, 0xc2924e, 0x8a8f99];
+      for (const side of [-1, 1]) {
+        let s = rnd() * 5;
+        while (s < L - 8) {
+          const w = 14 + rnd() * 8, h = 7 + rnd() * 5, d = 10 + rnd() * 4;
+          const x = side * (13 + rnd() * 4 + d / 2);
+          B.building(d, h, w, x, h / 2, Z(s + w / 2), 0xb4b9bd);
+          B.box(B.atlas, d + 0.3, 1.3, w + 0.3, x, h + 0.6, Z(s + w / 2), 0x70757d);
+          if (rnd() < 0.6) B.cyl(B.atlas, 0.7, 0.9, 7 + rnd() * 4, 9, x + 3, h + 3, Z(s + w / 2 + 4), 0x9b5a4a, jr());
+          s += w + 2 + rnd() * 6;
+        }
+        // container stacks near tracks
+        let s3 = 3 + rnd() * 6;
+        while (s3 < L - 7) {
+          const n = 1 + (rnd() * 3 | 0);
+          for (let k = 0; k < n; k++) {
+            B.box(B.atlas, 2.4, 2.5, 6, side * (7.6 + rnd() * 1.2), 1.25 + k * 2.5 + 0.62, Z(s3 + 3), cols[(rnd() * cols.length) | 0], REG.plain, 0, 0, jr() * 0.5);
+          }
+          s3 += 8 + rnd() * 9;
+        }
       }
     }
   }
