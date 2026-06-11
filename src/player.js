@@ -56,9 +56,14 @@ export class Player {
   }
 
   play(name, fade = 0.18) {
-    if (!this.ready || this.current === name) return;
+    if (!this.ready) return;
     const next = this.actions[name];
     if (!next) return;
+    if (this.current === name) {
+      // once-клипы (Jump) можно перезапустить, иначе буферный прыжок замораживал позу
+      if (next.loop === THREE.LoopOnce) { next.reset(); next.play(); }
+      return;
+    }
     next.reset();
     if (name === 'Jump') next.timeScale = 1.35;
     next.fadeIn(fade).play();
@@ -80,9 +85,14 @@ export class Player {
     this.leanT = 0;
     this.stepT = 0;
     this.current = null;
+    // остановить ВСЕ клипы: иначе clampWhenFinished-поза Death (отлетевшая
+    // голова) переживала рестарт и смешивалась с бегом
+    if (this.mixer) this.mixer.stopAllAction();
     if (this.model) {
       this.model.rotation.x = 0;
+      this.model.rotation.z = 0;
       this.model.position.y = 0;
+      this.model.position.z = 0;
     }
   }
 
@@ -107,7 +117,7 @@ export class Player {
     this.grounded = false;
     this.rolling = 0;
     this.rollSpin = 0;
-    if (this.model) { this.model.rotation.x = 0; this.model.position.y = 0; }
+    if (this.model) { this.model.rotation.x = 0; this.model.position.y = 0; this.model.position.z = 0; }
     this.play('Jump', 0.08);
     return true;
   }
@@ -128,6 +138,15 @@ export class Player {
 
   die() {
     this.dead = true;
+    // сбросить кувырок/наклон, чтобы Death-анимация не смешивалась с вывернутой позой
+    this.rolling = 0;
+    this.leanT = 0;
+    if (this.model) {
+      this.model.rotation.x = 0;
+      this.model.rotation.z = 0;
+      this.model.position.y = 0;
+      this.model.position.z = 0;
+    }
     this.play('Death', 0.1);
   }
 
@@ -140,9 +159,11 @@ export class Player {
       // погибший в прыжке падает на землю, а не зависает в воздухе
       if (!this.grounded) {
         this.vy -= GRAV * dt;
+        const prevY = this.y;
         this.y += this.vy * dt;
         const gh = world.groundHeight(this.x, dist);
-        if (this.y <= gh) { this.y = gh; this.grounded = true; }
+        if (this.y <= gh && prevY >= gh - 0.05) { this.y = gh; this.grounded = true; }
+        else if (this.y <= 0) { this.y = 0; this.grounded = true; }   // упал мимо крыш — на полотно
       }
       this.group.position.set(this.x, this.y, 0);
       this.shadow.position.set(this.x, world.groundHeight(this.x, dist) + 0.03, 0);
@@ -162,14 +183,18 @@ export class Player {
       if (this.y > gh + 0.05) {            // ran off a train roof
         this.grounded = false;
         this.vy = 0;
-      } else {
-        this.y = gh;
+      } else if (gh - this.y <= 0.5) {
+        this.y = gh;                       // плавный подъём (рампа)
       }
+      // резкая ступень (лоб поезда) не подхватывает игрока — это смерть, решает collide
     }
     if (!this.grounded) {
       this.vy -= GRAV * dt;
+      const prevY = this.y;
       this.y += this.vy * dt;
-      if (this.y <= gh && this.vy <= 0) {
+      // приземление засчитывается, только если в начале кадра игрок был НАД
+      // опорой (а не влетел в лоб поезда снизу/сбоку) — размер шага не важен
+      if (this.y <= gh && this.vy <= 0 && prevY >= gh - 0.05) {
         this.y = gh;
         this.grounded = true;
         cb.onLand && cb.onLand(this.y);
@@ -190,16 +215,24 @@ export class Player {
       }
     }
 
-    // roll timer + somersault (lift the pivot so the flip stays above ground)
+    // roll: somersault around the BODY CENTRE, not the feet origin —
+    // p = (I − R)·c keeps the centre fixed so nothing dips below the floor
     if (this.rolling > 0) {
       this.rolling -= dt;
       this.rollSpin += dt / 0.62 * Math.PI * 2;
       const prog = Math.min(this.rollSpin / (Math.PI * 2), 1);
+      const a = -prog * Math.PI * 2;
+      const c = 0.78;                       // высота центра тела
       if (this.model) {
-        this.model.rotation.x = -prog * Math.PI * 2;
-        this.model.position.y = Math.sin(prog * Math.PI) * 0.55;
+        this.model.rotation.x = a;
+        this.model.position.y = c - c * Math.cos(a);
+        this.model.position.z = -c * Math.sin(a);
       }
-      if (this.rolling <= 0 && this.model) { this.model.rotation.x = 0; this.model.position.y = 0; }
+      if (this.rolling <= 0 && this.model) {
+        this.model.rotation.x = 0;
+        this.model.position.y = 0;
+        this.model.position.z = 0;
+      }
     }
 
     // run cycle speed & lean

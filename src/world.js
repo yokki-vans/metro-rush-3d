@@ -482,7 +482,9 @@ export class World {
   groundHeight(px, dist) {
     let h = 0;
     for (const o of this.obstacles) {
-      if (o.kind === 'train') {
+      // по крышам можно бежать и у стоящих, и у ДВИЖУЩИХСЯ составов
+      // (бок и лоб по-прежнему смертельны — это решает collide)
+      if (o.kind === 'train' || o.kind === 'mtrain') {
         const x = (o.lane - 1) * LANE_W;
         if (Math.abs(px - x) > 1.3) continue;
         if (dist >= o.s0 - 0.3 && dist <= o.s1 - 0.2) h = Math.max(h, o.top);
@@ -615,7 +617,8 @@ function buildVariant(biome, vi, world) {
 
   // --- common ground & tracks
   const isTunnel = biome === 'tunnel';
-  B.box(B.atlas, 26, 0.5, L, 0, -0.27, -L / 2, 0x3b3e44);                       // base
+  // широкая земля до самых дальних домов — иначе постройки «висят» над пустотой
+  B.box(B.atlas, 140, 0.5, L, 0, -0.27, -L / 2, 0x3b3e44);                      // base
   B.box(B.atlas, 8.8, 0.34, L, 0, -0.15, -L / 2, 0x55504a, REG.concrete);      // ballast
   for (const tx of [-LANE_W, 0, LANE_W]) {
     for (const rx of [-0.72, 0.72]) {
@@ -716,11 +719,12 @@ function buildVariant(biome, vi, world) {
       B.box(B.atlas, 1.6, 0.9, L, side * 5.9, 0.95, -L / 2, 0x4e7a3d);          // hedge
       let s = 2 + rnd() * 3;
       while (s < L - 3) {
-        const x = side * (8.5 + rnd() * 7);
+        // деревья за платформой, стволом в землю (раньше парили на +0.6)
+        const x = side * (10 + rnd() * 6.5);
         const th = 1.6 + rnd() * 1.3;
-        B.cyl(B.atlas, 0.16, 0.22, th, 7, x, th / 2 + 0.6, Z(s), 0x6b4a32);
+        B.cyl(B.atlas, 0.16, 0.22, th, 7, x, th / 2, Z(s), 0x6b4a32);
         const greens = [0x3f7a36, 0x4c8a3f, 0x57953f, 0x35702f];
-        B.cone(B.atlas, 1.5 + rnd() * 0.9, 2.6 + rnd() * 1.6, 8, x, th + 1.8, Z(s), greens[(rnd() * 4) | 0]);
+        B.cone(B.atlas, 1.5 + rnd() * 0.9, 2.6 + rnd() * 1.6, 8, x, th + 1.2, Z(s), greens[(rnd() * 4) | 0]);
         s += 3.5 + rnd() * 4;
       }
       // distant low houses

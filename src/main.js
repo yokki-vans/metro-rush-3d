@@ -82,7 +82,7 @@ $('bestVal').textContent = best;
 function startRun() {
   world.reset();
   player.reset();
-  dist = 0; speed = 8.5; score = 0; coinsGot = 0; timeAlive = 0; milestone = 500; slowmo = 1; tunnelF = 0;
+  dist = 0; speed = 8.5; score = 0; coinsGot = 0; timeAlive = 0; milestone = 500; slowmo = 1; tunnelF = 0; camGround = 0;
   player.startRun();
   $('score').textContent = '0';
   $('coins').textContent = '0';
@@ -132,25 +132,28 @@ function gesture(dir) {
   }
 }
 
+// один палец — ровно ОДИН жест: после срабатывания свайп блокируется до
+// отпускания, иначе длинный свайп считывался как два сдвига подряд
 let tStart = null;
-const TH = 26;
+const TH = 28;
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  tStart = { x: e.clientX, y: e.clientY, t: performance.now(), moved: false };
+  tStart = { x: e.clientX, y: e.clientY, t: performance.now(), fired: false };
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (!tStart) return;
+  if (!tStart || tStart.fired) return;
   const dx = e.clientX - tStart.x, dy = e.clientY - tStart.y;
   if (Math.abs(dx) > TH || Math.abs(dy) > TH) {
+    tStart.fired = true;
     gesture(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'R' : 'L') : (dy > 0 ? 'D' : 'U'));
-    tStart = { x: e.clientX, y: e.clientY, t: tStart.t, moved: true };
   }
 });
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (tStart && !tStart.moved && performance.now() - tStart.t < 250) {
+  if (tStart && !tStart.fired && performance.now() - tStart.t < 250) {
     if (state === ST.RUN) gesture('U'); else gesture('TAP');
   }
   tStart = null;
 });
+renderer.domElement.addEventListener('pointercancel', () => { tStart = null; });
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const map = {
@@ -187,6 +190,7 @@ document.addEventListener('visibilitychange', () => {
 // --------------------------------------------------------------------- камера
 const camPos = new THREE.Vector3(0, 3.4, 6.4);
 const camLook = new THREE.Vector3(0, 1.4, -10);
+let camGround = 0;     // сглаженная высота опоры (земля/крыша поезда)
 function updateCamera(dt, t) {
   if (state === ST.TITLE || state === ST.LOADING) {
     camYaw += dt * 0.22;
@@ -196,10 +200,15 @@ function updateCamera(dt, t) {
     camera.lookAt(0, 1.2, 0);
   } else {
     const px = player.x, py = player.y;
-    const target = new THREE.Vector3(px * 0.55, 3.15 + py * 0.36, 6.2);
+    // камера следует за высотой ОПОРЫ: поднимается на крышах поездов,
+    // а прыжок добавляет лишь лёгкий подъём
+    const gh = world.groundHeight(px, dist);
+    camGround += (gh - camGround) * (1 - Math.exp(-5 * dt));
+    const air = Math.max(0, py - gh);
+    const target = new THREE.Vector3(px * 0.55, 3.15 + camGround * 0.85 + air * 0.22, 6.2);
     camPos.lerp(target, 1 - Math.exp(-7 * dt));
     camera.position.copy(camPos);
-    camLook.lerp(new THREE.Vector3(px * 0.75, 1.25 + py * 0.35, -9), 1 - Math.exp(-9 * dt));
+    camLook.lerp(new THREE.Vector3(px * 0.75, 1.25 + camGround * 0.8 + air * 0.3, -9), 1 - Math.exp(-9 * dt));
     camera.lookAt(camLook);
     camera.position.y += Math.sin(runT * 11) * 0.018 * Math.min(1, speed / 14);
   }
@@ -338,6 +347,6 @@ player.load().then(() => {
 window.addEventListener('pointerdown', () => audio.unlock(), { once: true });
 
 // debug handle
-window.__dbg = { player, world, sky, camera, scene, get state() { return state; }, get dist() { return dist; }, get speed() { return speed; } };
+window.__dbg = { player, world, sky, camera, scene, renderer, get state() { return state; }, get dist() { return dist; }, get speed() { return speed; } };
 
 requestAnimationFrame((n) => { last = n; requestAnimationFrame(frame); });
