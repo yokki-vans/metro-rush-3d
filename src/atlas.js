@@ -44,6 +44,10 @@ export const REG = {
   sign:       { x: 512, y: 320, w: 256, h: 128 },
   door:       { x: 768, y: 64,  w: 128, h: 256 },
   concrete:   { x: 512, y: 448, w: 128, h: 128 },
+  icoMagnet:  { x: 640, y: 448, w: 96,  h: 96 },
+  icoShield:  { x: 736, y: 448, w: 96,  h: 96 },
+  icoX2:      { x: 832, y: 448, w: 96,  h: 96 },
+  icoBoot:    { x: 640, y: 544, w: 96,  h: 96 },
 };
 
 export function makeAtlas() {
@@ -160,6 +164,105 @@ export function makeAtlas() {
     g.strokeStyle = 'rgba(0,0,0,.25)'; g.lineWidth = 8; g.strokeRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
   });
 
+  // booster icons: rounded color tile + bold glyph
+  const ico = (r, bg, draw) => {
+    g.save();
+    g.fillStyle = bg;
+    g.beginPath(); g.roundRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8, 20); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 5;
+    g.beginPath(); g.roundRect(r.x + 7, r.y + 7, r.w - 14, r.h - 14, 17); g.stroke();
+    g.translate(r.x + r.w / 2, r.y + r.h / 2);
+    draw();
+    g.restore();
+  };
+  ico(REG.icoMagnet, '#d63b4f', () => {            // магнит-подкова
+    g.strokeStyle = '#ffffff'; g.lineWidth = 16; g.lineCap = 'butt';
+    g.beginPath(); g.arc(0, -4, 22, Math.PI, 0); g.stroke();
+    g.strokeStyle = '#ffd7dd';
+    g.fillStyle = '#ffffff';
+    g.fillRect(-30, -6, 16, 22); g.fillRect(14, -6, 16, 22);
+    g.fillStyle = '#9fe8ff';
+    g.fillRect(-30, 16, 16, 8); g.fillRect(14, 16, 16, 8);
+  });
+  ico(REG.icoShield, '#2f80e0', () => {            // щит
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.moveTo(0, -26); g.lineTo(22, -16); g.lineTo(22, 4);
+    g.quadraticCurveTo(22, 22, 0, 30);
+    g.quadraticCurveTo(-22, 22, -22, 4);
+    g.lineTo(-22, -16); g.closePath(); g.fill();
+    g.fillStyle = '#2f80e0';
+    g.beginPath(); g.moveTo(0, -16); g.lineTo(13, -10) ; g.lineTo(13, 4); g.quadraticCurveTo(13, 15, 0, 20); g.closePath(); g.fill();
+  });
+  ico(REG.icoX2, '#e8a020', () => {                // множитель
+    g.fillStyle = '#ffffff'; g.font = 'bold 52px sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('×2', 0, 2);
+  });
+  ico(REG.icoBoot, '#27ae60', () => {              // кроссовок-прыжок
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.roundRect(-22, -2, 30, 16, 6); g.fill();
+    g.beginPath(); g.roundRect(-22, -22, 14, 24, 6); g.fill();
+    g.fillStyle = '#bdf5d2'; g.fillRect(-22, 10, 44, 6);
+    g.strokeStyle = '#ffffff'; g.lineWidth = 5; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(16, -20); g.lineTo(16, -6); g.moveTo(10, -13); g.lineTo(16, -6); g.lineTo(22, -13); g.stroke();
+  });
+
+  return tex(c);
+}
+
+// ------------------------------------------------ tiling ground noise (tinted)
+export function makeGround() {
+  const [c, g] = canvas(128, 128);
+  g.fillStyle = '#d8d4cc'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 900; i++) {
+    const v = 160 + (Math.random() * 96) | 0;
+    g.fillStyle = `rgba(${v},${v - 6},${v - 14},${0.35 + Math.random() * 0.5})`;
+    const s = 1 + Math.random() * 3;
+    g.fillRect(Math.random() * 128, Math.random() * 128, s, s);
+  }
+  for (let i = 0; i < 60; i++) {
+    g.fillStyle = `rgba(40,36,30,${0.06 + Math.random() * 0.1})`;
+    g.fillRect(Math.random() * 128, Math.random() * 128, 2 + Math.random() * 6, 1 + Math.random() * 3);
+  }
+  return tex(c, true);
+}
+
+// --------------------------------------------------------- coin face texture
+export function makeCoin() {
+  const [c, g] = canvas(128, 128);
+  const grad = g.createRadialGradient(50, 44, 8, 64, 64, 64);
+  grad.addColorStop(0, '#fff3b0');
+  grad.addColorStop(0.45, '#ffd34d');
+  grad.addColorStop(0.8, '#e8a020');
+  grad.addColorStop(1, '#b8761a');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = 'rgba(184,118,26,.9)'; g.lineWidth = 7;
+  g.beginPath(); g.arc(64, 64, 52, 0, 7); g.stroke();
+  g.strokeStyle = 'rgba(255,243,176,.8)'; g.lineWidth = 3;
+  g.beginPath(); g.arc(64, 64, 46, 0, 7); g.stroke();
+  g.fillStyle = '#a8650f';
+  g.font = 'bold 64px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('M', 64, 68);
+  g.fillStyle = 'rgba(255,255,255,.55)';
+  g.beginPath(); g.ellipse(42, 36, 18, 9, -0.7, 0, 7); g.fill();
+  return tex(c);
+}
+
+// ------------------------------------------------------------ cloud sprites
+export function makeCloud() {
+  const [c, g] = canvas(256, 128);
+  g.clearRect(0, 0, 256, 128);
+  for (let i = 0; i < 14; i++) {
+    const x = 40 + Math.random() * 176, y = 50 + Math.random() * 36;
+    const r = 18 + Math.random() * 26;
+    const gr = g.createRadialGradient(x, y, 2, x, y, r);
+    gr.addColorStop(0, 'rgba(255,255,255,.85)');
+    gr.addColorStop(0.7, 'rgba(255,255,255,.35)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  }
   return tex(c);
 }
 
@@ -192,27 +295,48 @@ export function boxUV(geo, faces) {
 }
 
 // ------------------------------------------------------- building windows 256
-export function makeWindows() {
+// variant 'glass' — стеклянные башни; 'brick' — кирпич с меньшими окнами
+export function makeWindows(variant = 'glass') {
   const [c, g] = canvas(256, 256);
   const [ce, ge] = canvas(256, 256);
+  const brick = variant === 'brick';
   // wall: near-white (vertex tint gives the color)
-  g.fillStyle = '#f2f1ee'; g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 200; i++) {
-    g.fillStyle = `rgba(0,0,20,${Math.random() * 0.05})`;
-    g.fillRect(Math.random() * 256, Math.random() * 256, 3, 3);
+  g.fillStyle = brick ? '#efe9e2' : '#f2f1ee'; g.fillRect(0, 0, 256, 256);
+  if (brick) {
+    // кирпичная кладка: ряды со смещением + швы
+    const bh = 11, bw = 30;
+    for (let row = 0; row * bh < 256; row++) {
+      const off = (row % 2) * bw / 2;
+      for (let x = -1; x * bw < 256 + bw; x++) {
+        const shade = 0.82 + Math.random() * 0.26;
+        g.fillStyle = `rgba(${(228 * shade) | 0},${(212 * shade) | 0},${(198 * shade) | 0},1)`;
+        g.fillRect(x * bw + off + 1, row * bh + 1, bw - 2, bh - 2);
+      }
+    }
+  } else {
+    for (let i = 0; i < 200; i++) {
+      g.fillStyle = `rgba(0,0,20,${Math.random() * 0.05})`;
+      g.fillRect(Math.random() * 256, Math.random() * 256, 3, 3);
+    }
   }
   ge.fillStyle = '#000'; ge.fillRect(0, 0, 256, 256);
   const COLS = 4, ROWS = 4, cw = 256 / COLS, ch = 256 / ROWS;
+  const m = brick ? 16 : 10, mv = brick ? 18 : 12;
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      const wx = x * cw + 10, wy = y * ch + 12, ww = cw - 20, wh = ch - 24;
-      g.fillStyle = '#39414f';
+      const wx = x * cw + m, wy = y * ch + mv, ww = cw - m * 2, wh = ch - mv * 2;
+      g.fillStyle = brick ? '#6e5b4c' : '#39414f';
       g.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
       const grad = g.createLinearGradient(wx, wy, wx + ww, wy + wh);
-      grad.addColorStop(0, '#2b3950'); grad.addColorStop(.5, '#46607f'); grad.addColorStop(1, '#222d40');
+      if (brick) { grad.addColorStop(0, '#2e3441'); grad.addColorStop(.5, '#4c5666'); grad.addColorStop(1, '#262b36'); }
+      else { grad.addColorStop(0, '#2b3950'); grad.addColorStop(.5, '#46607f'); grad.addColorStop(1, '#222d40'); }
       g.fillStyle = grad; g.fillRect(wx, wy, ww, wh);
       g.fillStyle = 'rgba(255,255,255,0.22)';
       g.beginPath(); g.moveTo(wx + ww * .15, wy + wh); g.lineTo(wx + ww * .35, wy); g.lineTo(wx + ww * .5, wy); g.lineTo(wx + ww * .3, wy + wh); g.fill();
+      if (brick) {                          // подоконник
+        g.fillStyle = 'rgba(255,255,255,.5)';
+        g.fillRect(wx - 5, wy + wh + 3, ww + 10, 4);
+      }
       // emissive: ~half of the windows lit warm at night
       if (Math.random() < 0.52) {
         const warm = ['#ffd98a', '#ffc46b', '#fff2c4', '#ffb55e'][(Math.random() * 4) | 0];

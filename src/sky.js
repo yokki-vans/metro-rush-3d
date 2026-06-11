@@ -1,6 +1,7 @@
-// Sky dome with day/night cycle, sun & moon, stars, fog and a weather state
-// machine (clear / rain / fog / snow) with smooth transitions + lightning.
+// Sky dome with day/night cycle, sun & moon, stars, clouds, fog and a weather
+// state machine (clear / rain / fog / snow) with smooth transitions + lightning.
 import * as THREE from 'three';
+import { makeCloud } from './atlas.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -44,6 +45,10 @@ export class Sky {
     this.dirL = new THREE.DirectionalLight(0xffffff, 1.1);
     this.dirL.position.set(-14, 26, -18);
     scene.add(this.dirL);
+    // холодный контровой/заполняющий — объём на теневой стороне
+    this.fillL = new THREE.DirectionalLight(0x8fb4ff, 0.3);
+    this.fillL.position.set(16, 14, 24);
+    scene.add(this.fillL);
 
     // dome
     const dg = new THREE.SphereGeometry(430, 24, 12);
@@ -93,6 +98,30 @@ export class Sky {
     // sun & moon sprites
     this.sun = this._sprite(0xfff3c8, 95);
     this.moon = this._sprite(0xcfdcff, 48);
+
+    // clouds — медленно дрейфующие спрайты высоко над городом
+    this.clouds = [];
+    {
+      const ct = makeCloud();
+      for (let i = 0; i < 7; i++) {
+        const m = new THREE.SpriteMaterial({
+          map: ct, transparent: true, opacity: 0, depthWrite: false, fog: false,
+        });
+        const sp = new THREE.Sprite(m);
+        const sc = 90 + Math.random() * 120;
+        sp.scale.set(sc, sc * 0.42, 1);
+        sp.renderOrder = -92;
+        scene.add(sp);
+        this.clouds.push({
+          sp,
+          x: (Math.random() - 0.5) * 520,
+          y: 90 + Math.random() * 110,
+          z: -140 - Math.random() * 220,
+          v: 1.5 + Math.random() * 2.5,
+          k: 0.55 + Math.random() * 0.4,
+        });
+      }
+    }
 
     // rain: line segments in a camera-local box
     {
@@ -218,6 +247,7 @@ export class Sky {
     this.hemi.groundColor.setHex(0x3c4038).lerp(this._cHor, 0.25);
     this.dirL.intensity = dirI + flash * 1.2;
     this.dirL.color.copy(this._cSun);
+    this.fillL.intensity = 0.12 + hemiI * 0.22;
 
     // fog — denser in weather & tunnels
     const fogFar = lerp(60, 235 * W.fogMul, 1 - inTunnel * 0.55);
@@ -237,6 +267,15 @@ export class Sky {
 
     this.dome.position.copy(camera.position);
     this.stars.position.set(camera.position.x, camera.position.y - 30, camera.position.z);
+
+    // clouds: дрейф + видимость днём в ясную/слабо-серую погоду
+    const cloudOp = (1 - night) * (1 - W.gray * 0.8) * 0.8;
+    for (const cl of this.clouds) {
+      cl.x += cl.v * dt;
+      if (cl.x > 290) cl.x = -290;
+      cl.sp.position.set(camera.position.x + cl.x, camera.position.y + cl.y, camera.position.z + cl.z);
+      cl.sp.material.opacity = cloudOp * cl.k;
+    }
 
     // rain update
     const rainA = W.rain * (1 - inTunnel);

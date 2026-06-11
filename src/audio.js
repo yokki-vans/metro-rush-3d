@@ -222,6 +222,36 @@ export class AudioSys {
     });
   }
 
+  // подбор бустера: восходящее арпеджио, у каждого типа своя тоника
+  pickup(type) {
+    if (!this.ctx) return; const t = this.ctx.currentTime;
+    const base = { magnet: 523, shield: 392, x2: 659, boot: 587 }[type] || 523;
+    [1, 1.26, 1.5].forEach((k, i) => {
+      const o = this.ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = base * k;
+      o.connect(this._env(0.2, 0.14, t + i * 0.055));
+      o.start(t + i * 0.055); o.stop(t + i * 0.055 + 0.16);
+    });
+    this._whoosh(t, 900, 2600, 0.18, 0.06);
+  }
+
+  shieldPop() {
+    if (!this.ctx) return; const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuf;
+    const f = this.ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1500; f.Q.value = 1.4;
+    src.connect(f); f.connect(this._env(0.5, 0.25, t));
+    src.start(t, Math.random()); src.stop(t + 0.28);
+    const o = this.ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(700, t); o.frequency.exponentialRampToValueAtTime(180, t + 0.22);
+    o.connect(this._env(0.3, 0.24, t)); o.start(t); o.stop(t + 0.26);
+  }
+
+  buy() {
+    this.coin();
+    if (!this.ctx) return; const t = this.ctx.currentTime + 0.12;
+    const o = this.ctx.createOscillator(); o.type = 'square'; o.frequency.value = 1568;
+    o.connect(this._env(0.12, 0.1, t)); o.start(t); o.stop(t + 0.12);
+  }
+
   horn() {
     if (!this.ctx) return; const t = this.ctx.currentTime;
     [311, 370].forEach(fr => {

@@ -22,15 +22,36 @@ const mulberry = (a) => () => {
 // ---------------------------------------------------------------- geo helpers
 const _tmpM = new THREE.Matrix4();
 class Builder {
-  constructor() { this.atlas = []; this.win = []; this.glow = []; }
+  constructor() {
+    this.atlas = []; this.win = []; this.winB = []; this.glow = [];
+    this.ground = []; this.halo = []; this.haloT = [];
+  }
   box(list, w, h, d, x, y, z, color, region = REG.plain, ry = 0, rx = 0) {
     const g = new THREE.BoxGeometry(w, h, d);
     if (region !== 'win') regionUV(g, region);
     this._fin(list, g, x, y, z, color, ry, rx);
     return g;
   }
+  // тайловая «земля» (гравий/бетон/трава): UV по мировому размеру
+  gbox(w, h, d, x, y, z, color, tile = 0.5) {
+    const g = new THREE.BoxGeometry(w, h, d);
+    const uv = g.attributes.uv;
+    const k = Math.max(w, d) * tile;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * k, uv.getY(i) * k);
+    this._fin(this.ground, g, x, y, z, color);
+  }
+  // светящийся «крест» из двух квадов (гало фонаря/лампы)
+  haloQuad(list, size, x, y, z, color) {
+    for (const ry of [0, Math.PI / 2]) {
+      const p = new THREE.PlaneGeometry(size, size);
+      tint(p, color);
+      if (ry) p.rotateY(ry);
+      p.translate(x, y, z);
+      list.push(p);
+    }
+  }
   // building box with per-face window tiling (u: columns, v: floors)
-  building(w, h, d, x, y, z, color) {
+  building(w, h, d, x, y, z, color, brick = false) {
     const g = new THREE.BoxGeometry(w, h, d);
     const cols = Math.max(1, Math.round(w / 2.4)), floors = Math.max(1, Math.round(h / 2.6));
     const dcols = Math.max(1, Math.round(d / 2.4));
@@ -39,7 +60,11 @@ class Builder {
     for (let f = 0; f < 6; f++) {
       for (let i = f * 4; i < f * 4 + 4; i++) uv.setXY(i, uv.getX(i) * mul[f][0], uv.getY(i) * mul[f][1]);
     }
-    this._fin(this.win, g, x, y, z, color);
+    this._fin(brick ? this.winB : this.win, g, x, y, z, color);
+    // AO-«юбка» у основания — здание перестаёт казаться парящим
+    const sk = new THREE.BoxGeometry(w + 0.14, 0.6, d + 0.14);
+    regionUV(sk, REG.plain);
+    this._fin(this.atlas, sk, x, y - h / 2 + 0.3, z, new THREE.Color(color).multiplyScalar(0.42));
   }
   cyl(list, r0, r1, h, seg, x, y, z, color, rx = 0, rz = 0) {
     const g = new THREE.CylinderGeometry(r0, r1, h, seg);
@@ -95,17 +120,37 @@ export class World {
       map: tex.windows, vertexColors: true,
       emissive: 0xffffff, emissiveMap: tex.windowsE, emissiveIntensity: 0,
     }));
+    this.matWinB = curved(new THREE.MeshLambertMaterial({          // кирпичные фасады
+      map: tex.windowsB, vertexColors: true,
+      emissive: 0xffffff, emissiveMap: tex.windowsBE, emissiveIntensity: 0,
+    }));
+    this.matGround = curved(new THREE.MeshLambertMaterial({ map: tex.ground, vertexColors: true }));
     this.matGlow = curved(new THREE.MeshBasicMaterial({ vertexColors: true }));
-    this.matCoin = curved(new THREE.MeshLambertMaterial({ color: 0xffc928, emissive: 0x885f00 }));
+    this.matHalo = curved(new THREE.MeshBasicMaterial({            // гало фонарей (ночью)
+      map: tex.glow, vertexColors: true, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    this.matHaloT = curved(new THREE.MeshBasicMaterial({           // гало ламп тоннеля (всегда)
+      map: tex.glow, vertexColors: true, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    this.matCoin = curved(new THREE.MeshLambertMaterial({
+      map: tex.coin, vertexColors: true, emissive: 0xffb030, emissiveMap: tex.coin, emissiveIntensity: 0.3,
+    }));
 
     // pools
     this.trains = instPool(makeTrainGeo(), this.matAtlas, 24);
     this.barriers = instPool(makeBarrierGeo(), this.matAtlas, 24);
     this.gantries = instPool(makeGantryGeo(), this.matAtlas, 14);
     this.ramps = instPool(makeRampGeo(), this.matAtlas, 8);
-    const coinGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.1, 14);
-    coinGeo.rotateX(Math.PI / 2);
-    tint(coinGeo, 0xffffff);
+    // монета: диск с тиснёным аверсом + золотой обод
+    const coinFace = new THREE.CylinderGeometry(0.38, 0.38, 0.07, 18);
+    coinFace.rotateX(Math.PI / 2);
+    tint(coinFace, 0xffffff);
+    const coinRim = new THREE.TorusGeometry(0.38, 0.055, 8, 18);
+    tint(coinRim, 0xffd34d);
+    const coinGeo = mergeGeometries([coinFace, coinRim], false);
+    coinFace.dispose(); coinRim.dispose();
     this.coinSpin = { value: 0 };
     const mc = this.matCoin;
     const prevCb = mc.onBeforeCompile;
@@ -121,6 +166,56 @@ export class World {
     mc.customProgramCacheKey = () => 'coinspin';
     this.coins = instPool(coinGeo, this.matCoin, 130);
     for (const p of [this.trains, this.barriers, this.gantries, this.ramps, this.coins]) this.root.add(p.mesh);
+
+    // ореол монет: инстансный квад с тем же буфером матриц (одна загрузка в GPU);
+    // спин-патч на него не ставится, так что квад не крутится рёбрами к камере
+    this.coinHaloMat = curved(new THREE.MeshBasicMaterial({
+      map: tex.glow, color: 0xffc23d, transparent: true, opacity: 0.4,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    {
+      const hg = new THREE.PlaneGeometry(1.15, 1.15);
+      this.coinHalo = new THREE.InstancedMesh(hg, this.coinHaloMat, this.coins.mesh.count);
+      this.coinHalo.instanceMatrix = this.coins.mesh.instanceMatrix;
+      this.coinHalo.frustumCulled = false;
+      this.coinHalo.renderOrder = 4;
+      this.root.add(this.coinHalo);
+    }
+
+    // бустеры-пикапы: 4 типа × 2 экземпляра (иконка-«крест» + спрайт-гало)
+    this.pickupDefs = {
+      magnet: { reg: REG.icoMagnet, color: 0xff5e72 },
+      shield: { reg: REG.icoShield, color: 0x57a8ff },
+      x2:     { reg: REG.icoX2,     color: 0xffc23d },
+      boot:   { reg: REG.icoBoot,   color: 0x4fe08a },
+    };
+    this.matPickup = curved(new THREE.MeshLambertMaterial({
+      map: tex.atlas, vertexColors: true, side: THREE.DoubleSide,
+      emissive: 0xffffff, emissiveMap: tex.atlas, emissiveIntensity: 0.35,
+    }));
+    this.pickupPool = [];
+    for (const [type, def] of Object.entries(this.pickupDefs)) {
+      for (let k = 0; k < 2; k++) {
+        const grp = new THREE.Group();
+        const pg = new THREE.PlaneGeometry(0.85, 0.85);
+        regionUV(pg, def.reg);
+        tint(pg, 0xffffff);
+        const m1 = new THREE.Mesh(pg, this.matPickup);
+        const m2 = new THREE.Mesh(pg, this.matPickup);
+        m2.rotation.y = Math.PI / 2;
+        const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: tex.glow, color: def.color, transparent: true, opacity: 0.85,
+          depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        halo.scale.setScalar(2.1);
+        grp.add(m1, m2, halo);
+        grp.visible = false;
+        this.root.add(grp);
+        this.pickupPool.push({ type, grp, busy: false });
+      }
+    }
+    this.pickups = [];
+    this.timeS = 0;
 
     // train liveries via instance colors
     this.trainColors = [0xd64545, 0x3f7fd0, 0x3da25c, 0xe08c2d, 0xc9b438, 0x7b5cd6].map(h => new THREE.Color(h));
@@ -176,6 +271,9 @@ export class World {
     for (const c of this.coinList) if (!c.taken) this.coins.free.push(c.inst);
     this.obstacles = [];
     this.coinList = [];
+    if (this.pickups) for (const pk of this.pickups) { pk.slot.busy = false; pk.slot.grp.visible = false; }
+    this.pickups = [];
+    this.pickupT = 55;           // первый бустер — почти сразу
     this.nextChunk = 0;
     this.spawnS = 70;            // obstacle-free runway
     this.laneBusy = [0, 0, 0];   // course-s until which a lane is filled by a train
@@ -256,8 +354,37 @@ export class World {
       } else {                                          // breather + coins
         this._maybeCoinLine(lane(), s, Math.min(10, lineMax), true);
       }
+      // бустер между рядами препятствий
+      this.pickupT -= gap;
+      if (this.pickupT <= 0 && free.length) {
+        this._addPickup(free[(Math.random() * free.length) | 0], s + gap * 0.55);
+        this.pickupT = 105 + Math.random() * 85;
+      }
       this.spawnS += gap;
     }
+  }
+
+  _addPickup(laneI, s) {
+    const types = Object.keys(this.pickupDefs);
+    const type = Math.random() < 0.18 ? 'shield' : types[(Math.random() * types.length) | 0];
+    const slot = this.pickupPool.find(p => p.type === type && !p.busy);
+    if (!slot) return;
+    slot.busy = true;
+    slot.grp.visible = true;
+    this.pickups.push({ type, lane: laneI, s, slot, taken: false, phase: Math.random() * 7 });
+  }
+
+  // сбор бустера игроком; возвращает тип или null
+  collectPickup(dist, px, py) {
+    for (const pk of this.pickups) {
+      if (pk.taken) continue;
+      if (Math.abs(pk.s - dist) > 1.25) continue;
+      if (Math.abs((pk.lane - 1) * LANE_W - px) > 1.0) continue;
+      if (py > 2.2) continue;
+      pk.taken = true;
+      return pk.type;
+    }
+    return null;
   }
 
   _take(pool) { return pool.free.length ? pool.free.pop() : null; }
@@ -368,7 +495,28 @@ export class World {
     this._spawnLayout(dist, speed);
 
     // night-driven looks
+    this.timeS += dt;
     this.matWin.emissiveIntensity = env.night * 1.25 + env.flash * 0.2;
+    this.matWinB.emissiveIntensity = this.matWin.emissiveIntensity;
+    this.matHalo.opacity = env.night * 0.55;
+    // пульс монет + усиление свечения ночью
+    const pulse = 0.5 + 0.5 * Math.sin(this.timeS * 3.4);
+    this.matCoin.emissiveIntensity = 0.3 + pulse * 0.22 + env.night * 0.5;
+    this.coinHaloMat.opacity = 0.24 + pulse * 0.1 + env.night * 0.28;
+
+    // бустеры: парение + вращение
+    for (let i = this.pickups.length - 1; i >= 0; i--) {
+      const pk = this.pickups[i];
+      const z = dist - pk.s;
+      if (pk.taken || z > 16) {
+        pk.slot.busy = false;
+        pk.slot.grp.visible = false;
+        this.pickups.splice(i, 1);
+        continue;
+      }
+      pk.slot.grp.position.set((pk.lane - 1) * LANE_W, 1.08 + Math.sin(this.timeS * 2.2 + pk.phase) * 0.13, z);
+      pk.slot.grp.rotation.y = this.timeS * 2.1 + pk.phase;
+    }
 
     // obstacles
     const M = _tmpM;
@@ -463,10 +611,22 @@ export class World {
     let group = v.pool.pop();
     if (!group) {
       group = new THREE.Group();
-      const mA = new THREE.Mesh(v.geoAtlas, this.matAtlas);
-      const mW = v.geoWin ? new THREE.Mesh(v.geoWin, this.matWin) : null;
-      const mG = v.geoGlow ? new THREE.Mesh(v.geoGlow, this.matGlow) : null;
-      for (const m of [mA, mW, mG]) if (m) { m.frustumCulled = false; group.add(m); }
+      const parts = [
+        [v.geoAtlas, this.matAtlas, 0],
+        [v.geoGround, this.matGround, 0],
+        [v.geoWin, this.matWin, 0],
+        [v.geoWinB, this.matWinB, 0],
+        [v.geoGlow, this.matGlow, 0],
+        [v.geoHalo, this.matHalo, 3],
+        [v.geoHaloT, this.matHaloT, 3],
+      ];
+      for (const [geo, mat, ro] of parts) {
+        if (!geo) continue;
+        const m = new THREE.Mesh(geo, mat);
+        m.frustumCulled = false;
+        m.renderOrder = ro;
+        group.add(m);
+      }
     }
     group.position.z = 0;
     this.root.add(group);
@@ -509,7 +669,8 @@ export class World {
       if (o.kind === 'barrier') {
         if (py < o.top - 0.12) return 'crash';
       } else if (o.kind === 'gantry') {
-        if (py + colH > o.gapY + 0.06) return 'crash';
+        // с супер-кроссовками рамку можно перепрыгнуть ЦЕЛИКОМ (выше балки ~2.5)
+        if (py + colH > o.gapY + 0.06 && py < 2.4) return 'crash';
       } else {
         if (py < o.top - 0.55) return 'crash';
       }
@@ -519,13 +680,14 @@ export class World {
 
   collect(dist, px, py, magnetR = 0) {
     let got = 0;
+    const dyMag = Math.min(magnetR, 1.9);   // магнит не должен снимать монеты с крыш под ногами
     for (const c of this.coinList) {
       if (c.taken) continue;
       const dz = Math.abs(c.s - dist);
       if (dz > 1.3 + magnetR) continue;
       const cx = (c.lane - 1) * LANE_W;
       const dx = Math.abs(cx - px), dy = Math.abs(c.y - (py + 0.95));
-      if ((dx < 1.0 && dy < 1.15) || (magnetR > 0 && dx < magnetR && dy < magnetR && dz < magnetR)) {
+      if ((dx < 1.0 && dy < 1.15) || (magnetR > 0 && dx < magnetR && dy < dyMag && dz < magnetR)) {
         c.taken = true;
         this.coins.mesh.setMatrixAt(c.inst, this.coins.zero);
         this.coins.free.push(c.inst);
@@ -617,9 +779,9 @@ function buildVariant(biome, vi, world) {
 
   // --- common ground & tracks
   const isTunnel = biome === 'tunnel';
-  // широкая земля до самых дальних домов — иначе постройки «висят» над пустотой
-  B.box(B.atlas, 140, 0.5, L, 0, -0.27, -L / 2, 0x3b3e44);                      // base
-  B.box(B.atlas, 8.8, 0.34, L, 0, -0.15, -L / 2, 0x55504a, REG.concrete);      // ballast
+  // широкая ТЕКСТУРНАЯ земля до самых дальних домов
+  B.gbox(140, 0.5, L, 0, -0.27, -L / 2, isTunnel ? 0x3a3c40 : 0x54555a, 0.16);  // base
+  B.gbox(8.8, 0.34, L, 0, -0.15, -L / 2, 0x6e6357, 0.8);                        // ballast gravel
   for (const tx of [-LANE_W, 0, LANE_W]) {
     for (const rx of [-0.72, 0.72]) {
       B.box(B.atlas, 0.09, 0.14, L, tx + rx, 0.1, -L / 2, 0xc7ccd6);
@@ -631,7 +793,7 @@ function buildVariant(biome, vi, world) {
   }
   // platforms
   for (const side of [-1, 1]) {
-    B.box(B.atlas, 4.6, 0.62, L, side * 6.7, 0.31, -L / 2, isTunnel ? 0x6a6e76 : 0x9aa0a8, REG.concrete);
+    B.gbox(4.6, 0.62, L, side * 6.7, 0.31, -L / 2, isTunnel ? 0x7a7e86 : 0xb2b7be, 0.55);
     B.box(B.atlas, 0.3, 0.08, L, side * 4.55, 0.66, -L / 2, 0xe8c93e);          // warning strip
   }
 
@@ -642,6 +804,7 @@ function buildVariant(biome, vi, world) {
       for (let s = 4; s < L; s += 8) {
         B.box(B.atlas, 1.1, 7.6, 0.5, side * 9.1, 3.5, Z(s), 0x4c4f57);
         B.box(B.glow, 0.1, 0.5, 2.4, side * 8.85, 4.4, Z(s + 4), 0xffe9b0);     // wall lamps
+        B.haloQuad(B.haloT, 1.7, side * 8.7, 4.4, Z(s + 4), 0xffe9b0);
       }
       B.box(B.atlas, 1.4, 2.2, 2.0, side * 8.5, 1.4, Z(L * (0.3 + side * 0.2) + 8), 0x8b8f98, REG.concrete); // service niche
     }
@@ -649,6 +812,7 @@ function buildVariant(biome, vi, world) {
     for (let s = 2; s < L; s += 8) {
       B.box(B.atlas, 19.4, 0.5, 0.7, 0, 6.7, Z(s), 0x3c3f45);
       B.box(B.glow, 1.6, 0.08, 0.5, 0, 6.55, Z(s + 4), 0xfff3c8);               // ceiling lights
+      B.haloQuad(B.haloT, 2.2, 0, 6.4, Z(s + 4), 0xfff3c8);
     }
   } else {
     // catenary poles & wires
@@ -663,6 +827,7 @@ function buildVariant(biome, vi, world) {
       B.box(B.atlas, 0.14, 4.6, 0.14, side * 8.6, 2.3, Z(s), 0x3f444d);
       B.box(B.atlas, 1.1, 0.1, 0.1, side * 8.1, 4.55, Z(s), 0x3f444d);
       B.box(B.glow, 0.5, 0.14, 0.3, side * 7.7, 4.48, Z(s), 0xfff0c0);
+      B.haloQuad(B.halo, 2.0, side * 7.7, 4.45, Z(s), 0xffdf9e);   // ночное гало
     }
     // fences along platform edges
     for (let s = 0; s < L; s += 4) {
@@ -704,8 +869,15 @@ function buildVariant(biome, vi, world) {
       while (s < L - 5) {
         const w = 10 + rnd() * 6, d = 7 + rnd() * 4, h = 8 + rnd() * 9;
         const x = side * (11.5 + rnd() * 3 + d / 2);
-        B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0]);
+        B.building(d, h, w, x, h / 2, Z(s + w / 2), palette[(rnd() * palette.length) | 0], true);
         B.box(B.atlas, d + 0.5, 0.6, w + 0.5, x, h + 0.3, 0 + Z(s + w / 2), 0x6e574a);
+        if (rnd() < 0.5) {                                   // постер на цоколе
+          const pr = new THREE.BoxGeometry(0.1, 1.5, 2.6);
+          boxUV(pr, { px: adRegs[(rnd() * 4) | 0], nx: adRegs[(rnd() * 4) | 0], rest: REG.plain });
+          pr.translate(x - side * (d / 2 + 0.06), 1.7, Z(s + w / 2 + (rnd() - 0.5) * 3));
+          tint(pr, 0xffffff);
+          B.atlas.push(pr);
+        }
         if (rnd() < 0.55) {                                  // rooftop water tower
           B.cyl(B.atlas, 0.9, 0.9, 1.6, 10, x, h + 1.4, Z(s + w / 2), 0x7a5240);
           B.cone(B.atlas, 1.0, 0.7, 10, x, h + 2.55, Z(s + w / 2), 0x5d4034);
@@ -716,12 +888,19 @@ function buildVariant(biome, vi, world) {
     }
   } else if (biome === 'park') {
     for (const side of [-1, 1]) {
+      B.gbox(22, 0.06, L, side * 20, 0.0, -L / 2, 0x5d8c44, 0.5);               // газон
       B.box(B.atlas, 1.6, 0.9, L, side * 5.9, 0.95, -L / 2, 0x4e7a3d);          // hedge
       let s = 2 + rnd() * 3;
       while (s < L - 3) {
         // деревья за платформой, стволом в землю (раньше парили на +0.6)
         const x = side * (10 + rnd() * 6.5);
         const th = 1.6 + rnd() * 1.3;
+        const disc = new THREE.CircleGeometry(1.25 + rnd() * 0.5, 10);          // тень кроны
+        regionUV(disc, REG.plain);
+        disc.rotateX(-Math.PI / 2);
+        disc.translate(x, 0.085, Z(s));
+        tint(disc, 0x3d5731);
+        B.atlas.push(disc);
         B.cyl(B.atlas, 0.16, 0.22, th, 7, x, th / 2, Z(s), 0x6b4a32);
         const greens = [0x3f7a36, 0x4c8a3f, 0x57953f, 0x35702f];
         B.cone(B.atlas, 1.5 + rnd() * 0.9, 2.6 + rnd() * 1.6, 8, x, th + 1.2, Z(s), greens[(rnd() * 4) | 0]);
@@ -761,9 +940,17 @@ function buildVariant(biome, vi, world) {
     }
   }
 
-  const geoAtlas = mergeGeometries(B.atlas, false);
-  const geoWin = B.win.length ? mergeGeometries(B.win, false) : null;
-  const geoGlow = B.glow.length ? mergeGeometries(B.glow, false) : null;
-  [...B.atlas, ...B.win, ...B.glow].forEach(g => g.dispose());
-  return { geoAtlas, geoWin, geoGlow, pool: [] };
+  const merge = (list) => list.length ? mergeGeometries(list, false) : null;
+  const out = {
+    geoAtlas: merge(B.atlas),
+    geoWin: merge(B.win),
+    geoWinB: merge(B.winB),
+    geoGlow: merge(B.glow),
+    geoGround: merge(B.ground),
+    geoHalo: merge(B.halo),
+    geoHaloT: merge(B.haloT),
+    pool: [],
+  };
+  [...B.atlas, ...B.win, ...B.winB, ...B.glow, ...B.ground, ...B.halo, ...B.haloT].forEach(g => g.dispose());
+  return out;
 }

@@ -105,10 +105,84 @@
   #loading { font-size: 18px; letter-spacing: .1em; z-index: 20; background: #0c1230; }
   .spin { width: 42px; height: 42px; border: 4px solid rgba(255,255,255,.2); border-top-color: #ffd34d; border-radius: 50%; animation: rot 0.9s linear infinite; margin-bottom: 16px; }
   @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* виньетка поверх 3D, под UI */
+  #vignette {
+    position: fixed; inset: 0; z-index: 5; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 42%, transparent 52%, rgba(4,6,22,.38) 100%);
+  }
+  /* плашки активных бустеров */
+  #boosts { display: flex; gap: 8px; margin-top: 10px; }
+  .bchip {
+    position: relative; overflow: hidden;
+    background: rgba(8,12,40,.6); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 12px; padding: 6px 12px 9px; font-size: 17px;
+    backdrop-filter: blur(4px);
+  }
+  .bchip i {
+    position: absolute; left: 0; bottom: 0; height: 3px; width: 100%;
+    background: linear-gradient(90deg, #ffd34d, #ff8a3d); border-radius: 2px;
+  }
+  .pill.bump { animation: bump .3s cubic-bezier(.2,2.4,.4,1); }
+  @keyframes bump { 40% { transform: scale(1.18); } }
+
+  /* кнопки тайтла */
+  .menurow { display: flex; gap: 12px; margin-top: 24px; pointer-events: auto; }
+  .mbtn {
+    cursor: pointer; font-size: clamp(13px, 3.6vw, 16px);
+    padding: 11px 18px; border-radius: 14px;
+    background: rgba(10, 14, 44, .72); border: 1px solid rgba(255,255,255,.3);
+    backdrop-filter: blur(6px); box-shadow: 0 4px 14px rgba(0,0,0,.4);
+  }
+  .bank { margin-top: 16px; font-size: clamp(14px, 4vw, 18px); color: #ffd34d; text-shadow: 0 2px 6px #000; }
+
+  /* панели магазина и лидеров */
+  .modal {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(3, 5, 20, .55); backdrop-filter: blur(3px);
+    pointer-events: auto;
+  }
+  .modal .panel { max-width: min(92vw, 480px); max-height: 84vh; overflow: auto; padding: 20px 22px; }
+  .panel h3 { font-family: 'Bungee', sans-serif; font-size: clamp(20px, 6vw, 28px); color: #ffd34d; margin-bottom: 12px; text-shadow: 0 3px 0 rgba(70,40,0,.7); }
+  .pclose {
+    position: sticky; float: right; top: 0; cursor: pointer;
+    width: 38px; height: 38px; border-radius: 10px; line-height: 36px;
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.3);
+  }
+  #shopGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 8px; }
+  .skin {
+    cursor: pointer; padding: 10px 6px 9px; border-radius: 16px; text-align: center;
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.18);
+  }
+  .skin .chip { width: 54px; height: 54px; border-radius: 50%; margin: 0 auto 8px; box-shadow: inset 0 -6px 12px rgba(0,0,0,.35), 0 4px 10px rgba(0,0,0,.4); }
+  .skin b { display: block; font-size: 13px; margin-bottom: 4px; }
+  .skin span { font-size: 12px; color: #ffd34d; }
+  .skin.sel { border-color: #2bd96a; background: rgba(43,217,106,.14); }
+  .skin.locked span { color: #9fb3d9; }
+  .skin.deny { animation: deny .35s; }
+  @keyframes deny { 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+  .shopBank { font-size: 15px; color: #ffd34d; margin-top: 4px; }
+
+  .brow {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 10px; margin: 4px 0;
+    background: rgba(255,255,255,.06); font-size: 15px;
+  }
+  .brow b { width: 26px; color: #9fc8ff; }
+  .brow span { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brow i { font-style: normal; color: #ffd34d; }
+  .brow.me { background: rgba(43, 217, 106, .2); border: 1px solid rgba(43,217,106,.5); }
+  .bempty { opacity: .7; font-size: 14px; padding: 14px 0; }
+  .nameRow { display: flex; align-items: center; gap: 8px; justify-content: center; margin-top: 12px; font-size: 14px; }
+  #goBoard { margin-top: 12px; text-align: left; }
+  #goBoard .brow { font-size: 13px; padding: 5px 9px; }
 </style>
 </head>
 <body>
 <div id="loading" class="overlay"><div class="spin"></div>ЗАГРУЗКА…</div>
+
+<div id="vignette"></div>
 
 <div id="title" class="overlay hidden">
   <div class="logo">METRO RUSH<small>3 D &nbsp;R U N N E R</small></div>
@@ -119,6 +193,11 @@
     <span>⬆️ прыжок</span>
     <span>⬇️ кувырок</span>
   </div>
+  <div class="menurow">
+    <div class="mbtn" id="btnBoard">🏆 ЛИДЕРЫ</div>
+    <div class="mbtn" id="btnShop">🤖 ПЕРСОНАЖИ</div>
+  </div>
+  <div class="bank">🪙 Копилка: <span id="bankVal">0</span></div>
   <div class="best">🏆 Рекорд: <span id="bestVal">0</span></div>
   <div class="credits">three.js (MIT) · RobotExpressive (CC0) · шрифты OFL · звук — WebAudio-синтез</div>
 </div>
@@ -127,7 +206,13 @@
   <div class="hudrow">
     <div>
       <div class="pill">⚡ <span id="score">0</span></div>
-      <div class="pill" style="margin-top:8px; font-size: clamp(13px,3.8vw,17px);">🪙 <span id="coins" class="c">0</span></div>
+      <div class="pill" id="coinPill" style="margin-top:8px; font-size: clamp(13px,3.8vw,17px);">🪙 <span id="coins" class="c">0</span></div>
+      <div id="boosts">
+        <div class="bchip hidden" id="bc-magnet">🧲<i></i></div>
+        <div class="bchip hidden" id="bc-x2">×2<i></i></div>
+        <div class="bchip hidden" id="bc-boot">👟<i></i></div>
+        <div class="bchip hidden" id="bc-shield">🛡</div>
+      </div>
     </div>
     <div class="hudright">
       <div class="pill" id="fpsPill"><span id="fps">0</span> fps</div>
@@ -144,10 +229,34 @@
   <div class="panel">
     <h2>УПС!</h2>
     <div class="stat">Счёт: <b id="goScore">0</b></div>
-    <div class="stat">Монеты: <b id="goCoins">0</b> 🪙</div>
+    <div class="stat">Монеты: <b id="goCoins">0</b> 🪙 · Копилка: <b id="goBank">0</b></div>
     <div class="stat">Рекорд: <b id="goBest">0</b> 🏆</div>
-    <div class="tap" style="margin-top:18px; pointer-events:none;">КОСНИСЬ — ЕЩЁ РАЗ</div>
+    <div id="goBoard"></div>
+    <div class="menurow" style="justify-content:center;">
+      <div class="mbtn" id="goBoardBtn">🏆 ЛИДЕРЫ</div>
+      <div class="mbtn" id="goShopBtn">🤖 ПЕРСОНАЖИ</div>
+    </div>
+    <div class="tap" style="margin-top:16px; pointer-events:none;">КОСНИСЬ — ЕЩЁ РАЗ</div>
     <div style="margin-top:14px;"><span class="btn" id="muteBtn2" style="display:inline-block;">🔊</span></div>
+  </div>
+</div>
+
+<div id="shop" class="modal hidden">
+  <div class="panel">
+    <div class="pclose" id="shopClose">✕</div>
+    <h3>ПЕРСОНАЖИ</h3>
+    <div class="shopBank">🪙 Копилка: <span id="bankVal2">0</span></div>
+    <div id="shopGrid"></div>
+  </div>
+</div>
+
+<div id="board" class="modal hidden">
+  <div class="panel">
+    <div class="pclose" id="boardClose">✕</div>
+    <h3>ТАБЛИЦА ЛИДЕРОВ</h3>
+    <div style="font-size:12px; opacity:.65;">лучшие забеги на этом устройстве</div>
+    <div id="boardList"></div>
+    <div class="nameRow">Имя: <b id="boardName"></b> <span class="mbtn" id="btnRename" style="padding:6px 12px;">✏️</span></div>
   </div>
 </div>
 

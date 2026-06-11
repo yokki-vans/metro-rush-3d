@@ -35,6 +35,20 @@ export class Player {
         if (o.material) curved(o.material);
       }
     });
+
+    // пузырь щита
+    this.bubble = new THREE.Mesh(
+      new THREE.SphereGeometry(0.95, 18, 12),
+      curved(new THREE.MeshBasicMaterial({
+        color: 0x6fc4ff, transparent: true, opacity: 0.22,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }))
+    );
+    this.bubble.position.y = 0.88;
+    this.bubble.visible = false;
+    this.bubble.renderOrder = 6;
+    this.group.add(this.bubble);
+    this.bubbleT = 0;
     const box = new THREE.Box3().setFromObject(model);
     const h = box.max.y - box.min.y;
     const s = 1.62 / h;
@@ -52,7 +66,57 @@ export class Player {
     const death = this.actions.Death;
     if (death) { death.setLoop(THREE.LoopOnce); death.clampWhenFinished = true; }
     this.ready = true;
+    if (this.pendingSkin) this.applySkin(this.pendingSkin);
     this.play('Idle', 0);
+  }
+
+  // перекраска материалов робота под выбранный скин
+  applySkin(def) {
+    if (!this.model) { this.pendingSkin = def; return; }
+    this.pendingSkin = def;
+    this.model.traverse(o => {
+      if (!o.isMesh || !o.material || o === this.bubble) return;
+      const m = o.material;
+      if (!m.userData.base) {
+        m.userData.base = {
+          color: m.color.getHex(),
+          emissive: m.emissive ? m.emissive.getHex() : 0,
+          ei: m.emissiveIntensity ?? 1,
+          op: m.opacity, tr: m.transparent,
+        };
+      }
+      const b = m.userData.base;
+      const role = /main/i.test(m.name) ? 'primary'
+        : /grey|gray|metal|silver/i.test(m.name) ? 'secondary' : 'other';
+      if (!def || def.id === 'classic') {
+        m.color.setHex(b.color);
+        if (m.emissive) m.emissive.setHex(b.emissive);
+        m.emissiveIntensity = b.ei;
+        m.opacity = b.op; m.transparent = b.tr;
+      } else {
+        if (role === 'primary') {
+          m.color.setHex(def.primary);
+          m.emissive.setHex(def.glow); m.emissiveIntensity = def.glowInt;
+        } else if (role === 'secondary') {
+          m.color.setHex(def.secondary);
+          m.emissive.setHex(def.glow); m.emissiveIntensity = def.glowInt * 0.35;
+        } else if (m.emissive) {
+          m.emissive.setHex(def.glow); m.emissiveIntensity = def.glowInt * 0.15;
+        }
+        m.opacity = def.opacity ?? 1;
+        m.transparent = (def.opacity ?? 1) < 1;
+      }
+      m.needsUpdate = true;
+    });
+  }
+
+  setShield(on) { if (this.bubble) this.bubble.visible = on; }
+
+  saveHop() {                          // спасительный прыжок при срабатывании щита
+    this.vy = Math.max(this.vy, 12.5);
+    this.grounded = false;
+    this.rolling = 0;
+    this.play('Jump', 0.06);
   }
 
   play(name, fade = 0.18) {
@@ -81,6 +145,8 @@ export class Player {
     this.rollSpin = 0;
     this.jumpBuf = 0;          // «нажал прыжок чуть раньше приземления»
     this.rollBuf = 0;          // свайп вниз в воздухе → кувырок при касании
+    this.boostJump = false;
+    if (this.bubble) this.bubble.visible = false;
     this.dead = false;
     this.leanT = 0;
     this.stepT = 0;
@@ -113,7 +179,7 @@ export class Player {
       this.jumpBuf = 0.16;            // буфер: исполним сразу после приземления
       return false;
     }
-    this.vy = JUMP_V;
+    this.vy = JUMP_V * (this.boostJump ? 1.34 : 1);   // супер-кроссовки: выше поездов
     this.grounded = false;
     this.rolling = 0;
     this.rollSpin = 0;
@@ -201,7 +267,7 @@ export class Player {
         if (this.jumpBuf > 0) {            // буферизованный прыжок
           this.jumpBuf = 0;
           this.rollBuf = 0;
-          this.vy = JUMP_V;
+          this.vy = JUMP_V * (this.boostJump ? 1.34 : 1);
           this.grounded = false;
           this.play('Jump', 0.08);
           cb.onJump && cb.onJump();
@@ -248,6 +314,13 @@ export class Player {
       if (this.rolling <= 0 && this.model.rotation.x !== 0 && this.current !== 'Death') {
         this.model.rotation.x *= Math.exp(-10 * dt);
       }
+    }
+
+    // пульс пузыря щита
+    if (this.bubble && this.bubble.visible) {
+      this.bubbleT += dt;
+      this.bubble.material.opacity = 0.2 + Math.sin(this.bubbleT * 5) * 0.07;
+      this.bubble.scale.setScalar(1 + Math.sin(this.bubbleT * 3.3) * 0.04);
     }
 
     // footstep dust
