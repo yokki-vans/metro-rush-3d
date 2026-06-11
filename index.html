@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0c1230">
+<title>Metro Rush 3D — эндлесс-раннер</title>
+<style>
+  @font-face {
+    font-family: 'Bungee';
+    src: url('assets/Bungee-Regular.ttf') format('truetype');
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Russo One';
+    src: url('assets/RussoOne-Regular.ttf') format('truetype');
+    font-display: swap;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #0c1230;
+    font-family: 'Russo One', system-ui, sans-serif;
+    color: #fff;
+    touch-action: none;
+    overscroll-behavior: none;
+    user-select: none; -webkit-user-select: none;
+    position: fixed;
+  }
+  canvas { display: block; position: fixed; inset: 0; }
+  .hidden { display: none !important; }
+  .overlay {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; pointer-events: none;
+    padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+  }
+  .logo {
+    font-family: 'Bungee', sans-serif;
+    font-size: clamp(34px, 11vw, 72px);
+    line-height: 0.95;
+    background: linear-gradient(180deg, #ffe96b 0%, #ffb13d 45%, #ff7a3d 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 4px 0 rgba(40,10,60,.85)) drop-shadow(0 8px 22px rgba(0,0,0,.45));
+    transform: rotate(-3deg);
+    margin-bottom: 6px;
+  }
+  .logo small { display: block; font-size: .42em; letter-spacing: .35em; -webkit-text-fill-color: #9fe8ff; filter: none; }
+  .tagline { opacity: .85; font-size: clamp(13px, 3.6vw, 17px); margin-bottom: 26px; text-shadow: 0 2px 8px #000; }
+  .tap {
+    font-size: clamp(18px, 5.5vw, 26px);
+    padding: 14px 34px; border-radius: 999px;
+    background: linear-gradient(180deg, #29d36a, #0fa64b);
+    box-shadow: 0 6px 0 #0b6e33, 0 12px 30px rgba(0,0,0,.5);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { transform: scale(1.06); } }
+  .hints { display: flex; gap: 18px; margin-top: 30px; font-size: clamp(11px, 3vw, 14px); opacity: .9; }
+  .hints span { background: rgba(8,12,40,.55); border: 1px solid rgba(255,255,255,.22); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(4px); }
+  .best { margin-top: 22px; font-size: clamp(14px, 4vw, 18px); color: #ffd34d; text-shadow: 0 2px 6px #000; }
+  .credits { position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); font-size: 10px; opacity: .55; }
+
+  #hud { justify-content: flex-start; align-items: stretch; }
+  .hudrow {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-top: max(10px, env(safe-area-inset-top));
+  }
+  .pill {
+    background: rgba(8, 12, 40, .55); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 14px; padding: 8px 14px; backdrop-filter: blur(4px);
+    font-size: clamp(16px, 4.6vw, 22px); text-shadow: 0 2px 4px #000;
+  }
+  .pill .c { color: #ffd34d; }
+  .btn {
+    pointer-events: auto; cursor: pointer;
+    width: 44px; height: 44px; border-radius: 12px;
+    background: rgba(8,12,40,.55); border: 1px solid rgba(255,255,255,.22);
+    font-size: 19px; line-height: 42px; text-align: center;
+    backdrop-filter: blur(4px);
+  }
+  .hudright { display: flex; gap: 10px; }
+  #fpsPill { font-size: 12px; opacity: .8; padding: 6px 10px; align-self: center; }
+  #pausedLbl { margin-top: 36vh; font-size: clamp(22px, 7vw, 34px); text-shadow: 0 3px 10px #000; }
+  #toast {
+    position: fixed; top: 22%; left: 50%; transform: translateX(-50%);
+    font-family: 'Bungee', sans-serif; font-size: clamp(28px, 9vw, 46px);
+    color: #ffd34d; text-shadow: 0 4px 0 #7a3c00, 0 8px 24px #000;
+    z-index: 11; pointer-events: none;
+  }
+  #toast.pop { animation: pop .5s cubic-bezier(.2,2.4,.4,1); }
+  @keyframes pop { 0% { transform: translateX(-50%) scale(.2); } 100% { transform: translateX(-50%) scale(1); } }
+
+  .panel {
+    background: rgba(10, 14, 44, .82); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 22px; padding: 26px 34px; backdrop-filter: blur(8px);
+    box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  }
+  .panel h2 { font-family: 'Bungee', sans-serif; font-size: clamp(26px, 8vw, 40px); color: #ff6b57; margin-bottom: 14px; text-shadow: 0 3px 0 rgba(60,5,30,.8); }
+  .stat { font-size: clamp(16px, 5vw, 22px); margin: 6px 0; }
+  .stat b { color: #ffd34d; }
+  #loading { font-size: 18px; letter-spacing: .1em; z-index: 20; background: #0c1230; }
+  .spin { width: 42px; height: 42px; border: 4px solid rgba(255,255,255,.2); border-top-color: #ffd34d; border-radius: 50%; animation: rot 0.9s linear infinite; margin-bottom: 16px; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="loading" class="overlay"><div class="spin"></div>ЗАГРУЗКА…</div>
+
+<div id="title" class="overlay hidden">
+  <div class="logo">METRO RUSH<small>3 D &nbsp;R U N N E R</small></div>
+  <div class="tagline">Беги по рельсам, уворачивайся от поездов!</div>
+  <div class="tap">КОСНИСЬ — БЕГИ!</div>
+  <div class="hints">
+    <span>⬅️➡️ свайп — полоса</span>
+    <span>⬆️ прыжок</span>
+    <span>⬇️ кувырок</span>
+  </div>
+  <div class="best">🏆 Рекорд: <span id="bestVal">0</span></div>
+  <div class="credits">three.js (MIT) · RobotExpressive (CC0) · шрифты OFL · звук — WebAudio-синтез</div>
+</div>
+
+<div id="hud" class="overlay hidden">
+  <div class="hudrow">
+    <div>
+      <div class="pill">⚡ <span id="score">0</span></div>
+      <div class="pill" style="margin-top:8px; font-size: clamp(13px,3.8vw,17px);">🪙 <span id="coins" class="c">0</span></div>
+    </div>
+    <div class="hudright">
+      <div class="pill" id="fpsPill"><span id="fps">0</span> fps</div>
+      <div class="btn" id="muteBtn">🔊</div>
+      <div class="btn" id="pauseBtn">II</div>
+    </div>
+  </div>
+  <div id="pausedLbl" class="hidden" style="align-self:center;">ПАУЗА</div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<div id="gameover" class="overlay hidden">
+  <div class="panel">
+    <h2>УПС!</h2>
+    <div class="stat">Счёт: <b id="goScore">0</b></div>
+    <div class="stat">Монеты: <b id="goCoins">0</b> 🪙</div>
+    <div class="stat">Рекорд: <b id="goBest">0</b> 🏆</div>
+    <div class="tap" style="margin-top:18px; pointer-events:none;">КОСНИСЬ — ЕЩЁ РАЗ</div>
+    <div style="margin-top:14px;"><span class="btn" id="muteBtn2" style="display:inline-block;">🔊</span></div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
